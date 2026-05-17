@@ -74,6 +74,24 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="image-transfer"
+        options={{
+          title: '图传',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="images" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="thermal"
+        options={{
+          title: '热相',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="thermometer" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

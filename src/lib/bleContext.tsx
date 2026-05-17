@@ -15,8 +15,11 @@ import type {
   DataStats,
   FieldMapping,
   ParsedFieldState,
+  ImageTransferRecord,
+  ImageTransferProgress,
+  ThermalFrame,
 } from './types';
-import { DEFAULT_BLE_UUID, DEFAULT_SERIAL_CONFIG } from './types';
+import { DEFAULT_BLE_UUID, DEFAULT_SERIAL_CONFIG, DEFAULT_IMG_THERMAL_UUID } from './types';
 import {
   DEFAULT_ALERT_RULES,
   DEFAULT_FIELD_MAPPINGS,
@@ -30,6 +33,19 @@ import {
   genId,
   requestAndroidPermissions,
 } from './bleService';
+import {
+  parseImageChunk,
+  mergeChunks,
+  createProgress,
+  createImageRecord,
+  MAX_IMAGE_HISTORY,
+} from './imageTransfer';
+import {
+  parseThermalFrame,
+  renderThermalPixels,
+  pixelsToDataUri,
+  MAX_THERMAL_HISTORY,
+} from './thermalAnalysis';
 
 // ============ 默认值 ============
 const DEFAULT_SETTINGS: AppSettings = {
@@ -41,6 +57,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   fieldMappings: DEFAULT_FIELD_MAPPINGS,
   bleUuid: DEFAULT_BLE_UUID,
   serialConfig: DEFAULT_SERIAL_CONFIG,
+  imgThermalUuid: DEFAULT_IMG_THERMAL_UUID,
+  thermalColormap: 'iron',
+  thermalUnit: 'C',
 };
 
 const DEFAULT_STATS: DataStats = {
@@ -75,6 +94,15 @@ interface BleContextType extends BleState {
   addFieldMapping: (mapping: FieldMapping) => void;
   updateFieldMapping: (fieldKey: string, mapping: Partial<FieldMapping>) => void;
   deleteFieldMapping: (fieldKey: string) => void;
+  // 图传
+  imageHistory: ImageTransferRecord[];
+  imageProgress: ImageTransferProgress | null;  // 接收中的进度
+  clearImageHistory: () => void;
+  // 热相
+  thermalFrames: ThermalFrame[];                // 最近历史帧
+  latestThermalFrame: ThermalFrame | null;
+  latestThermalDataUri: string | null;          // 最新帧伪彩色图像
+  clearThermalFrames: () => void;
 }
 
 const BleContext = createContext<BleContextType | null>(null);
@@ -97,6 +125,16 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const [stats, setStats] = useState<DataStats>(DEFAULT_STATS);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [parsedFields, setParsedFields] = useState<Record<string, ParsedFieldState>>({});
+
+  // ===== 图传状态 =====
+  const [imageHistory, setImageHistory] = useState<ImageTransferRecord[]>([]);
+  const [imageProgress, setImageProgress] = useState<ImageTransferProgress | null>(null);
+  const imageProgressRef = useRef<ImageTransferProgress | null>(null);
+
+  // ===== 热相状态 =====
+  const [thermalFrames, setThermalFrames] = useState<ThermalFrame[]>([]);
+  const [latestThermalFrame, setLatestThermalFrame] = useState<ThermalFrame | null>(null);
+  const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(null);
 
   // 订阅/定时器引用
   const notifySubscriptionRef = useRef<Subscription | null>(null);
@@ -344,6 +382,64 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         }
       );
 
+      // ===== 订阅图传通知特征值 =====
+      const { imageCharUuid, thermalCharUuid } = settingsRef.current.imgThermalUuid;
+      connectedPlx.monitorCharacteristicForService(
+        serviceUuid,
+        imageCharUuid,
+        (_err, characteristic) => {
+          if (!characteristic?.value) return;
+          const bytes = base64ToBytes(characteristic.value);
+          const chunk = parseImageChunk(bytes);
+          if (!chunk) return;
+
+          // 新传输开始（或总包数变化）
+          const prev = imageProgressRef.current;
+          const isNewTransfer = !prev || prev.totalChunks !== chunk.total;
+          const progress: ImageTransferProgress = isNewTransfer
+            ? createProgress(chunk.total)
+            : { ...prev, chunks: { ...prev.chunks } };
+
+          if (!progress.chunks[chunk.index]) {
+            progress.chunks[chunk.index] = chunk.payload;
+            progress.receivedChunks = Object.keys(progress.chunks).length;
+          }
+          imageProgressRef.current = progress;
+          setImageProgress({ ...progress });
+
+          // 所有包收到，合并成图像
+          if (progress.receivedChunks >= progress.totalChunks) {
+            const dataUri = mergeChunks(progress);
+            if (dataUri) {
+              const record = createImageRecord(genId(), dataUri, progress);
+              setImageHistory(prev => [record, ...prev].slice(0, MAX_IMAGE_HISTORY));
+            }
+            imageProgressRef.current = null;
+            setImageProgress(null);
+          }
+        }
+      );
+
+      // ===== 订阅热相通知特征值 =====
+      connectedPlx.monitorCharacteristicForService(
+        serviceUuid,
+        thermalCharUuid,
+        (_err, characteristic) => {
+          if (!characteristic?.value) return;
+          const bytes = base64ToBytes(characteristic.value);
+          const frame = parseThermalFrame(bytes);
+          if (!frame) return;
+
+          const colormap = settingsRef.current.thermalColormap;
+          const pixels = renderThermalPixels(frame, colormap);
+          const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
+
+          setLatestThermalFrame(frame);
+          setLatestThermalDataUri(dataUri);
+          setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
+        }
+      );
+
       // 监听连接断开
       disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
         const dev = connectedDeviceRef.current;
@@ -450,6 +546,16 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   // ============ 清空操作 ============
   const clearLogs = useCallback(() => setDataLogs([]), []);
   const clearAlerts = useCallback(() => setAlerts([]), []);
+  const clearImageHistory = useCallback(() => {
+    setImageHistory([]);
+    setImageProgress(null);
+    imageProgressRef.current = null;
+  }, []);
+  const clearThermalFrames = useCallback(() => {
+    setThermalFrames([]);
+    setLatestThermalFrame(null);
+    setLatestThermalDataUri(null);
+  }, []);
 
   // ============ 更新设置 ============
   const updateSettings = useCallback((partial: Partial<AppSettings>) => {
@@ -551,6 +657,15 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       addFieldMapping,
       updateFieldMapping,
       deleteFieldMapping,
+      // 图传
+      imageHistory,
+      imageProgress,
+      clearImageHistory,
+      // 热相
+      thermalFrames,
+      latestThermalFrame,
+      latestThermalDataUri,
+      clearThermalFrames,
     }}>
       {children}
     </BleContext.Provider>

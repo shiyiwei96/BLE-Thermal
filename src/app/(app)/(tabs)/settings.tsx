@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useBle } from '@/lib/bleContext';
 import { useSerial } from '@/lib/serialContext';
 import type { AppSettings, BleUuidConfig, DataAlertRule, FieldMapping, ThresholdOperator } from '@/lib/types';
-import { DEFAULT_BLE_UUID, BAUD_RATES, DEFAULT_SERIAL_CONFIG, PARITY_LABELS } from '@/lib/types';
+import { DEFAULT_BLE_UUID, DEFAULT_IMG_THERMAL_UUID, BAUD_RATES, DEFAULT_SERIAL_CONFIG, PARITY_LABELS } from '@/lib/types';
 
 const CYAN = '#00E5FF';
 const RED = '#FF3333';
@@ -671,7 +671,62 @@ export default function SettingsScreen() {
           </View>
         </View>
 
-        {/* ======= USB 串口设备配置 ======= */}
+        {/* ======= 图传 / 热相 UUID 配置 ======= */}
+        <SectionHeader title="图传 / 热相 UUID" />
+        <View style={{ backgroundColor: CARD_BG, borderTopColor: BORDER, borderBottomColor: BORDER, borderTopWidth: 1, borderBottomWidth: 1 }}>
+          {/* 图传特征值 UUID */}
+          <SettingRow label="图传特征值 UUID" description="接收分包图像数据的 BLE Notify 特征值">
+            <TextInput
+              value={settings.imgThermalUuid?.imageCharUuid ?? DEFAULT_IMG_THERMAL_UUID.imageCharUuid}
+              onChangeText={v => {
+                updateSettings({ imgThermalUuid: { ...(settings.imgThermalUuid ?? DEFAULT_IMG_THERMAL_UUID), imageCharUuid: v } });
+                showSaved();
+              }}
+              placeholder={DEFAULT_IMG_THERMAL_UUID.imageCharUuid}
+              placeholderTextColor={TEXT_MUTED}
+              autoCapitalize="characters"
+              style={{
+                color: CYAN, fontSize: 10, fontFamily: 'monospace',
+                backgroundColor: '#111', paddingHorizontal: 8, paddingVertical: 4,
+                borderWidth: 1, borderColor: BORDER, borderRadius: 2, width: 260,
+              }}
+            />
+          </SettingRow>
+
+          {/* 热相特征值 UUID */}
+          <SettingRow label="热相特征值 UUID" description="接收温度矩阵数据的 BLE Notify 特征值">
+            <TextInput
+              value={settings.imgThermalUuid?.thermalCharUuid ?? DEFAULT_IMG_THERMAL_UUID.thermalCharUuid}
+              onChangeText={v => {
+                updateSettings({ imgThermalUuid: { ...(settings.imgThermalUuid ?? DEFAULT_IMG_THERMAL_UUID), thermalCharUuid: v } });
+                showSaved();
+              }}
+              placeholder={DEFAULT_IMG_THERMAL_UUID.thermalCharUuid}
+              placeholderTextColor={TEXT_MUTED}
+              autoCapitalize="characters"
+              style={{
+                color: ORANGE, fontSize: 10, fontFamily: 'monospace',
+                backgroundColor: '#111', paddingHorizontal: 8, paddingVertical: 4,
+                borderWidth: 1, borderColor: BORDER, borderRadius: 2, width: 260,
+              }}
+            />
+          </SettingRow>
+
+          {/* 重置默认 */}
+          <Pressable
+            cssInterop={false}
+            onPress={() => { updateSettings({ imgThermalUuid: DEFAULT_IMG_THERMAL_UUID }); showSaved(); }}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', gap: 6,
+              paddingHorizontal: 16, paddingVertical: 10,
+              borderTopColor: '#1E1E1E', borderTopWidth: 1,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <Ionicons name="refresh" size={13} color={TEXT_MUTED} />
+            <Text style={{ color: TEXT_MUTED, fontSize: 11 }}>重置为默认 UUID</Text>
+          </Pressable>
+        </View>
         <SectionHeader title="USB 串口配置" />
         <View style={{ backgroundColor: CARD_BG, borderTopColor: BORDER, borderBottomColor: BORDER, borderTopWidth: 1, borderBottomWidth: 1 }}>
           {/* 串口连接状态 */}

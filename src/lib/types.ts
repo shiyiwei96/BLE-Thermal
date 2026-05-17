@@ -128,6 +128,9 @@ export interface AppSettings {
   fieldMappings: FieldMapping[];     // 字段映射配置
   bleUuid: BleUuidConfig;            // BLE UUID 配置
   serialConfig: SerialConfig;        // 串口通信配置
+  imgThermalUuid: ImgThermalUuidConfig; // 图传/热相 UUID 配置
+  thermalColormap: ThermalColormap;  // 热相伪彩色方案
+  thermalUnit: 'C' | 'F';           // 温度单位
 }
 
 // 数据统计信息
@@ -146,6 +149,65 @@ export interface ParsedFieldState {
   timestamp: number;
   history: FieldHistoryPoint[]; // 最近 60 个数据点
 }
+
+// ============ 蓝牙图传 ============
+
+/** 单次图传接收记录 */
+export interface ImageTransferRecord {
+  id: string;
+  receivedAt: number;       // 时间戳 ms
+  totalChunks: number;
+  receivedChunks: number;
+  dataUri: string;          // "data:image/jpeg;base64,..." 完成后填入
+  isComplete: boolean;
+  width?: number;
+  height?: number;
+}
+
+/** 图传进度（接收中状态） */
+export interface ImageTransferProgress {
+  totalChunks: number;
+  receivedChunks: number;
+  chunks: Record<number, Uint8Array>; // index -> chunk bytes
+}
+
+// ============ 热相分析 ============
+
+/** 伪彩色映射方案 */
+export type ThermalColormap = 'iron' | 'rainbow' | 'grayscale' | 'plasma';
+
+/** 单帧热成像数据 */
+export interface ThermalFrame {
+  id: string;
+  receivedAt: number;
+  width: number;
+  height: number;
+  /** 温度值数组（单位 0.1℃，即实际℃ = value / 10），长度 = width * height */
+  tempData: number[];
+  maxTemp: number;   // 最高温度 ℃
+  minTemp: number;   // 最低温度 ℃
+  avgTemp: number;   // 平均温度 ℃
+  maxPos: { x: number; y: number };
+  minPos: { x: number; y: number };
+}
+
+/** 框选区域温度统计 */
+export interface ThermalRegionStats {
+  maxTemp: number;
+  minTemp: number;
+  avgTemp: number;
+}
+
+// ============ 图传/热相 UUID 配置 ============
+export interface ImgThermalUuidConfig {
+  imageCharUuid: string;    // 图像数据特征值 UUID
+  thermalCharUuid: string;  // 热相数据特征值 UUID
+}
+
+export const DEFAULT_IMG_THERMAL_UUID: ImgThermalUuidConfig = {
+  imageCharUuid:   '6E400004-B5A3-F393-E0A9-E50E24DCCA9E',
+  thermalCharUuid: '6E400005-B5A3-F393-E0A9-E50E24DCCA9E',
+};
 
 // 蓝牙全局状态
 export interface BleState {
