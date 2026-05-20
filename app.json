@@ -2,7 +2,7 @@
   "expo": {
     "name": "蓝牙数据监测预警系统",
     "slug": "bluetooth-monitor-alert",
-    "version": "1.0.8",
+    "version": "1.0.9",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -62,7 +62,16 @@
       ],
       "expo-image",
       "expo-file-system",
-      "expo-document-picker"
+      "expo-document-picker",
+      "expo-sharing",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#00E5FF",
+          "defaultChannel": "ble-alerts"
+        }
+      ]
     ],
     "router": {
       "root": "src"

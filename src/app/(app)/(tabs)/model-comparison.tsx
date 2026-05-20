@@ -35,7 +35,7 @@ import {
   type ReferenceModel,
   type RgbFileParams,
 } from '@/lib/types';
-import { genId } from '@/lib/bleService';
+import { genId, createAlertEntry } from '@/lib/bleService';
 
 // ─── 主题 ────────────────────────────────────────────────────────────────────
 const BG        = '#121212';
@@ -219,7 +219,7 @@ function RgbParamsPanel({
 // ─── 主页面 ──────────────────────────────────────────────────────────────────
 
 export default function ModelComparisonScreen() {
-  const { imageHistory, alerts, connectedDevice } = useBle();
+  const { imageHistory, alerts, connectedDevice, addExternalAlert } = useBle();
 
   // ── 参考模型 ──
   const [refModel, setRefModel] = useState<ReferenceModel | null>(null);
@@ -397,6 +397,8 @@ export default function ModelComparisonScreen() {
       // 相似度骤降告警
       if (result.overallScore < alertThreshold) {
         showErr(`⚠ 相似度骤降：${result.overallScore} 分（阈值 ${alertThreshold}）`);
+        const alertEntry = createAlertEntry('SIMILARITY_DROP', connectedDevice, { rssiThreshold: -80, dataTimeoutSeconds: 10, defaultFormat: 'HEX', saveLog: true, dataAlertRules: [], fieldMappings: [], bleUuid: { serviceUuid: '', rxCharUuid: '', txCharUuid: '' }, serialConfig: { baudRate: 9600, dataBits: 8, stopBits: 1, parity: 0 }, imgThermalUuid: { imageCharUuid: '', thermalCharUuid: '' }, thermalColormap: 'iron', thermalUnit: 'C', notificationsEnabled: false, autoCloudSync: false, temperatureAlertThreshold: 85, streamBufferSize: 3 }, String(result.overallScore));
+        addExternalAlert(alertEntry);
       }
     },
     [refModel, diffThreshold, alertThreshold]

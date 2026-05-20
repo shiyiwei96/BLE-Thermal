@@ -67,7 +67,7 @@ export interface DataLogEntry {
 }
 
 // 预警类型
-export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD' | 'SERIAL_DISCONNECTED' | 'SIMILARITY_DROP';
+export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD' | 'SERIAL_DISCONNECTED' | 'SIMILARITY_DROP' | 'TEMPERATURE_HIGH';
 
 // 预警记录条目
 export interface AlertEntry {
@@ -131,6 +131,10 @@ export interface AppSettings {
   imgThermalUuid: ImgThermalUuidConfig; // 图传/热相 UUID 配置
   thermalColormap: ThermalColormap;  // 热相伪彩色方案
   thermalUnit: 'C' | 'F';           // 温度单位
+  notificationsEnabled: boolean;     // 推送通知开关
+  autoCloudSync: boolean;            // 设备断开后自动云同步
+  temperatureAlertThreshold: number; // 温度超限阈值 ℃
+  streamBufferSize: number;          // 图传流模式缓冲帧数 1-10
 }
 
 // 数据统计信息
@@ -324,6 +328,62 @@ export const MAX_COMPARISON_HISTORY = 20;
 export const COMPARISON_GRID = 4;           // 4×4 子块
 export const DEFAULT_DIFF_THRESHOLD = 20;   // 子块差异阈值 %
 export const DEFAULT_SIMILARITY_ALERT = 60; // 相似度骤降告警阈值
+
+// ============ 多设备管理 ============
+
+/** 设备颜色标签 */
+export type DeviceColorLabel = 'cyan' | 'red' | 'green' | 'yellow' | 'purple' | 'orange';
+
+export const DEVICE_COLOR_MAP: Record<DeviceColorLabel, string> = {
+  cyan:   '#00E5FF',
+  red:    '#FF3366',
+  green:  '#00E676',
+  yellow: '#FFD600',
+  purple: '#BB86FC',
+  orange: '#FF9100',
+};
+
+export const DEVICE_COLORS: DeviceColorLabel[] = ['cyan', 'red', 'green', 'yellow', 'purple', 'orange'];
+export const MAX_CONNECTED_DEVICES = 4;
+
+/** 每个设备独立存储的运行时数据（快照） */
+export interface DeviceRuntimeInfo {
+  deviceId: string;
+  customName?: string;
+  colorLabel: DeviceColorLabel;
+  latestTempMax?: number;   // 最新热相最高温度 ℃
+  latestTempMin?: number;
+  latestTempAvg?: number;
+  tempHistory: Array<{ ts: number; max: number; min: number; avg: number }>; // 温度历史（最近120点）
+}
+
+// ============ 热相录制 ============
+
+/** 热相录制帧快照 */
+export interface ThermalRecordFrame {
+  frameIndex: number;
+  timestamp: number;
+  maxTemp: number;
+  minTemp: number;
+  avgTemp: number;
+  /** 温度矩阵（JSON 字符串，仅 JSON 导出用，可选） */
+  matrixJson?: string;
+  /** 对应帧的伪彩色 BMP dataURI（图像序列导出用）*/
+  imageUri?: string;
+}
+
+/** 热相录制会话 */
+export interface ThermalRecording {
+  id: string;
+  name: string;
+  deviceId: string;
+  deviceName: string;
+  createdAt: number;
+  stoppedAt?: number;
+  frameCount: number;
+  durationMs: number;
+  frames: ThermalRecordFrame[];
+}
 
 // 蓝牙全局状态
 export interface BleState {

@@ -14,6 +14,7 @@ import { useSerial } from '@/lib/serialContext';
 import { useConnectionMode } from '@/lib/connectionMode';
 import { getRssiColor } from '@/lib/bleService';
 import type { FieldHistoryPoint } from '@/lib/types';
+import { useRouter } from 'expo-router';
 
 const CYAN = '#00E5FF';
 const RED = '#FF3333';
@@ -371,8 +372,9 @@ export default function StatsScreen() {
   const isBle = activeChannel === 'BLE';
   const accentColor = isBle ? CYAN : ORANGE;
 
-  const { connectedDevice, stats: bleStats, dataLogs: bleLogs, settings, parsedFields: bleParsedFields } = useBle();
+  const { connectedDevice, stats: bleStats, dataLogs: bleLogs, settings, parsedFields: bleParsedFields, connectedDevices } = useBle();
   const { connectedSerial, serialStats, serialLogs, serialParsedFields } = useSerial();
+  const router = useRouter();
 
   const stats = isBle ? bleStats : serialStats;
   const dataLogs = isBle ? bleLogs : serialLogs;
@@ -410,6 +412,18 @@ export default function StatsScreen() {
           </View>
           {/* 通道切换 */}
           <View style={{ flexDirection: 'row', gap: 6 }}>
+            {connectedDevices.length > 1 && (
+              <Pressable
+                cssInterop={false}
+                onPress={() => router.push('/(app)/temp-comparison')}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 2, borderWidth: 1,
+                  borderColor: '#7C4DFF', backgroundColor: '#1A0A3A', opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ color: '#7C4DFF', fontSize: 11, fontWeight: '700' }}>温度对比</Text>
+              </Pressable>
+            )}
             {(['BLE', 'SERIAL'] as const).map(ch => {
               const active = activeChannel === ch;
               const color = ch === 'BLE' ? CYAN : ORANGE;

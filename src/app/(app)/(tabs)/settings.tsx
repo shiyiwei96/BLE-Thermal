@@ -1,5 +1,6 @@
 /**
  * 设置页 - 配置预警阈值、数据报警规则、字段映射
+ * 新增：推送通知开关、温度预警阈值、云端同步设置
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -10,6 +11,7 @@ import {
   Text,
   TextInput,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,6 +20,12 @@ import { useBle } from '@/lib/bleContext';
 import { useSerial } from '@/lib/serialContext';
 import type { AppSettings, BleUuidConfig, DataAlertRule, FieldMapping, ThresholdOperator } from '@/lib/types';
 import { DEFAULT_BLE_UUID, DEFAULT_IMG_THERMAL_UUID, BAUD_RATES, DEFAULT_SERIAL_CONFIG, PARITY_LABELS } from '@/lib/types';
+import {
+  requestNotificationPermission,
+  checkNotificationPermission,
+  sendAlertNotification,
+} from '@/lib/notificationService';
+import { syncToCloud, testCloudConnection } from '@/lib/cloudSync';
 
 const CYAN = '#00E5FF';
 const RED = '#FF3333';
@@ -523,6 +531,9 @@ export default function SettingsScreen() {
     addAlertRule, updateAlertRule, deleteAlertRule,
     addFieldMapping, updateFieldMapping, deleteFieldMapping,
     bleReady, bleError,
+    connectedDevices,
+    dataLogs,
+    alerts,
   } = useBle();
 
   const { connectedSerial, serialError } = useSerial();
@@ -543,6 +554,87 @@ export default function SettingsScreen() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   }, []);
+
+  // ===== 推送通知状态 =====
+  const [notifPermStatus, setNotifPermStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+  const [notifTesting, setNotifTesting] = useState(false);
+  const [notifTestMsg, setNotifTestMsg] = useState<string | null>(null);
+
+  // ===== 云端同步状态 =====
+  const [cloudTesting, setCloudTesting] = useState(false);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+  const [cloudMsg, setCloudMsg] = useState<string | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
+  // 初始化时检查通知权限状态
+  useEffect(() => {
+    checkNotificationPermission().then(granted => {
+      setNotifPermStatus(granted ? 'granted' : 'denied');
+    });
+  }, []);
+
+  const handleRequestNotifPermission = async () => {
+    const granted = await requestNotificationPermission();
+    setNotifPermStatus(granted ? 'granted' : 'denied');
+    if (granted) {
+      handleChange('notificationsEnabled', true);
+    }
+  };
+
+  const handleTestNotification = async () => {
+    setNotifTesting(true);
+    setNotifTestMsg(null);
+    try {
+      await sendAlertNotification('TEMPERATURE_HIGH', null, '推送通知功能运行正常，预警发生时您将收到此类通知。');
+      setNotifTestMsg('测试通知已发送');
+    } catch (e) {
+      setNotifTestMsg('发送失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+    setNotifTesting(false);
+  };
+
+  const handleTestCloud = async () => {
+    setCloudTesting(true);
+    setCloudMsg(null);
+    setCloudError(null);
+    try {
+      const ok = await testCloudConnection();
+      if (ok) {
+        setCloudMsg('云端连接正常');
+        handleChange('autoCloudSync', true);
+      } else {
+        setCloudError('连接失败，请检查网络或 Supabase 配置');
+      }
+    } catch (e) {
+      setCloudError(e instanceof Error ? e.message : '连接失败');
+    }
+    setCloudTesting(false);
+  };
+
+  const handleManualSync = async () => {
+    setCloudSyncing(true);
+    setCloudMsg(null);
+    setCloudError(null);
+    try {
+      // 构建 SyncPayload 格式
+      const payloads = connectedDevices.map(device => ({
+        deviceId: device.id,
+        deviceName: device.name ?? device.id,
+        deviceAddress: device.id,
+        logs: dataLogs,
+        alerts,
+      }));
+      const result = await syncToCloud(payloads);
+      if (result.ok) {
+        setCloudMsg(`同步完成：${connectedDevices.length} 台设备，${dataLogs.length} 条日志，${alerts.length} 条预警`);
+      } else {
+        setCloudError(result.error ?? '同步失败');
+      }
+    } catch (e) {
+      setCloudError(e instanceof Error ? e.message : '同步失败');
+    }
+    setCloudSyncing(false);
+  };
 
   const handleChange = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     updateSettings({ [key]: value });
@@ -1040,6 +1132,170 @@ export default function SettingsScreen() {
             <Ionicons name="add-circle-outline" size={16} color={CYAN} />
             <Text style={{ color: CYAN, fontSize: 12, fontWeight: '700' }}>新增字段映射</Text>
           </Pressable>
+        </View>
+
+        {/* ======= 信号强度参考 ======= */}
+        {/* ======= 推送通知设置 ======= */}
+        <SectionHeader title="推送通知" />
+        <View style={{ backgroundColor: CARD_BG, borderTopColor: BORDER, borderBottomColor: BORDER, borderTopWidth: 1, borderBottomWidth: 1 }}>
+          {/* 通知开关 */}
+          <SettingRow
+            label="启用推送通知"
+            description={notifPermStatus === 'denied' ? '系统通知权限未授予，请先点击下方按钮申请权限' : '预警触发时发送本地推送通知（即使 App 在后台）'}
+          >
+            <Switch
+              value={!!settings.notificationsEnabled && notifPermStatus === 'granted'}
+              onValueChange={v => {
+                if (v && notifPermStatus !== 'granted') {
+                  handleRequestNotifPermission();
+                } else {
+                  handleChange('notificationsEnabled', v);
+                }
+              }}
+              trackColor={{ false: BORDER, true: `${CYAN}60` }}
+              thumbColor={settings.notificationsEnabled ? CYAN : TEXT_MUTED}
+            />
+          </SettingRow>
+
+          {/* 温度预警阈值 */}
+          <SettingRow
+            label="温度超限阈值 (℃)"
+            description={`超过此温度时触发预警通知\n当前: ${settings.temperatureAlertThreshold ?? 85} ℃`}
+          >
+            <NumberInput
+              value={settings.temperatureAlertThreshold ?? 85}
+              onChange={v => handleChange('temperatureAlertThreshold', v)}
+              min={0}
+              max={500}
+            />
+          </SettingRow>
+
+          {/* 权限申请 */}
+          {notifPermStatus !== 'granted' && (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10, borderTopColor: '#1E1E1E', borderTopWidth: 1 }}>
+              <Pressable
+                cssInterop={false}
+                onPress={handleRequestNotifPermission}
+                style={({ pressed }) => ({
+                  backgroundColor: `${CYAN}18`, borderWidth: 1, borderColor: CYAN,
+                  borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ color: CYAN, fontSize: 12, fontWeight: '700' }}>申请通知权限</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* 测试通知按钮 */}
+          {notifPermStatus === 'granted' && (
+            <View style={{ paddingHorizontal: 16, paddingVertical: 10, borderTopColor: '#1E1E1E', borderTopWidth: 1, gap: 8 }}>
+              <Pressable
+                cssInterop={false}
+                onPress={handleTestNotification}
+                disabled={notifTesting}
+                style={({ pressed }) => ({
+                  backgroundColor: `${GREEN}15`, borderWidth: 1, borderColor: `${GREEN}60`,
+                  borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+                  flexDirection: 'row', justifyContent: 'center', gap: 8,
+                  opacity: pressed || notifTesting ? 0.7 : 1,
+                })}
+              >
+                {notifTesting
+                  ? <ActivityIndicator size="small" color={GREEN} />
+                  : <Ionicons name="notifications" size={14} color={GREEN} />}
+                <Text style={{ color: GREEN, fontSize: 12, fontWeight: '700' }}>发送测试通知</Text>
+              </Pressable>
+              {notifTestMsg && (
+                <Text style={{ color: TEXT_MUTED, fontSize: 11, textAlign: 'center' }}>{notifTestMsg}</Text>
+              )}
+            </View>
+          )}
+
+          {/* 图传流缓冲区大小 */}
+          <SettingRow
+            label="图传流缓冲区帧数"
+            description={`流式模式下保留的最近帧数量\n当前: ${settings.streamBufferSize ?? 3} 帧`}
+          >
+            <NumberInput
+              value={settings.streamBufferSize ?? 3}
+              onChange={v => handleChange('streamBufferSize', Math.max(1, Math.min(10, v)))}
+              min={1}
+              max={10}
+            />
+          </SettingRow>
+        </View>
+
+        {/* ======= 云端数据同步 ======= */}
+        <SectionHeader title="云端数据同步" />
+        <View style={{ backgroundColor: CARD_BG, borderTopColor: BORDER, borderBottomColor: BORDER, borderTopWidth: 1, borderBottomWidth: 1 }}>
+          {/* 自动同步开关 */}
+          <SettingRow
+            label="自动云端同步"
+            description="连接预警触发时自动将数据同步到 Supabase 云端"
+          >
+            <Switch
+              value={!!settings.autoCloudSync}
+              onValueChange={v => handleChange('autoCloudSync', v)}
+              trackColor={{ false: BORDER, true: `${CYAN}60` }}
+              thumbColor={settings.autoCloudSync ? CYAN : TEXT_MUTED}
+            />
+          </SettingRow>
+
+          {/* 连接测试 + 手动同步按钮 */}
+          <View style={{ paddingHorizontal: 16, paddingVertical: 12, gap: 8, borderTopColor: '#1E1E1E', borderTopWidth: 1 }}>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Pressable
+                cssInterop={false}
+                onPress={handleTestCloud}
+                disabled={cloudTesting}
+                style={({ pressed }) => ({
+                  flex: 1, backgroundColor: `${CYAN}12`, borderWidth: 1, borderColor: `${CYAN}50`,
+                  borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+                  flexDirection: 'row', justifyContent: 'center', gap: 6,
+                  opacity: pressed || cloudTesting ? 0.7 : 1,
+                })}
+              >
+                {cloudTesting
+                  ? <ActivityIndicator size="small" color={CYAN} />
+                  : <Ionicons name="cloud" size={14} color={CYAN} />}
+                <Text style={{ color: CYAN, fontSize: 12, fontWeight: '700' }}>测试连接</Text>
+              </Pressable>
+
+              <Pressable
+                cssInterop={false}
+                onPress={handleManualSync}
+                disabled={cloudSyncing}
+                style={({ pressed }) => ({
+                  flex: 1, backgroundColor: `${GREEN}12`, borderWidth: 1, borderColor: `${GREEN}50`,
+                  borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+                  flexDirection: 'row', justifyContent: 'center', gap: 6,
+                  opacity: pressed || cloudSyncing ? 0.7 : 1,
+                })}
+              >
+                {cloudSyncing
+                  ? <ActivityIndicator size="small" color={GREEN} />
+                  : <Ionicons name="cloud-upload" size={14} color={GREEN} />}
+                <Text style={{ color: GREEN, fontSize: 12, fontWeight: '700' }}>立即同步</Text>
+              </Pressable>
+            </View>
+
+            {cloudMsg && (
+              <View style={{ backgroundColor: `${GREEN}15`, borderRadius: 4, padding: 8 }}>
+                <Text style={{ color: GREEN, fontSize: 11 }}>{cloudMsg}</Text>
+              </View>
+            )}
+            {cloudError && (
+              <View style={{ backgroundColor: `${RED}15`, borderRadius: 4, padding: 8 }}>
+                <Text style={{ color: RED, fontSize: 11 }}>{cloudError}</Text>
+              </View>
+            )}
+
+            <Text style={{ color: TEXT_MUTED, fontSize: 10, lineHeight: 16 }}>
+              同步内容：已连接设备信息、数据日志（最近 1000 条）、预警记录。
+              数据存储于 Supabase，可在云端 Dashboard 查看分析。
+            </Text>
+          </View>
         </View>
 
         {/* ======= 信号强度参考 ======= */}

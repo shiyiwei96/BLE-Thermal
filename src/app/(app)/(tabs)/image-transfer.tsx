@@ -2,6 +2,8 @@
  * 蓝牙图传页
  * - 实时显示分包接收进度
  * - 接收完成后展示完整图片
+ * - 流式模式：自动轮播最新图像帧（连续传输场景）
+ * - 流录制：录制图像帧序列到本地
  * - 历史图片列表（最多 50 张）
  * - 支持查看大图 / 保存到相册 / 删除
  */
@@ -167,20 +169,50 @@ function ImagePreviewModal({
 
 // ============ 主页面 ============
 export default function ImageTransferScreen() {
-  const { connectedDevice, imageHistory, imageProgress, clearImageHistory } = useBle();
+  const { connectedDevice, imageHistory, imageProgress, clearImageHistory, settings } = useBle();
   const [previewRecord, setPreviewRecord] = useState<ImageTransferRecord | null>(null);
   const [localHistory, setLocalHistory] = useState<ImageTransferRecord[]>([]);
   const [permError, setPermError] = useState<string | null>(null);
 
+  // ===== 流式模式状态 =====
+  const [streamMode, setStreamMode] = useState(false);
+  const [streamRecording, setStreamRecording] = useState(false);
+  const [streamRecordedFrames, setStreamRecordedFrames] = useState<ImageTransferRecord[]>([]);
+  const [streamRecordMsg, setStreamRecordMsg] = useState<string | null>(null);
+  const prevHistoryLen = React.useRef(0);
+
+  // 缓冲区大小（来自设置）
+  const bufferSize = settings?.streamBufferSize ?? 3;
+  // 流式模式下显示最新 bufferSize 帧
+  const streamBuffer = localHistory.slice(0, bufferSize);
+  // 流式模式下当前显示帧索引（自动轮播）
+  const [streamFrameIdx, setStreamFrameIdx] = useState(0);
+
   // 每次获得焦点时同步历史
   useFocusEffect(useCallback(() => {
     setLocalHistory(imageHistory);
+    prevHistoryLen.current = imageHistory.length;
   }, [imageHistory]));
 
   // 同步全局 imageHistory 变化
   React.useEffect(() => {
     setLocalHistory(imageHistory);
-  }, [imageHistory]);
+    // 流录制：有新帧时追加
+    if (streamRecording && imageHistory.length > prevHistoryLen.current) {
+      const newFrames = imageHistory.slice(0, imageHistory.length - prevHistoryLen.current);
+      setStreamRecordedFrames(prev => [...newFrames, ...prev]);
+    }
+    prevHistoryLen.current = imageHistory.length;
+  }, [imageHistory, streamRecording]);
+
+  // 流式模式自动轮播（每 0.5s 切换帧）
+  React.useEffect(() => {
+    if (!streamMode || streamBuffer.length === 0) return;
+    const timer = setInterval(() => {
+      setStreamFrameIdx(i => (i + 1) % Math.max(streamBuffer.length, 1));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [streamMode, streamBuffer.length]);
 
   // ===== 保存到相册 =====
   const handleSave = async (record: ImageTransferRecord) => {
@@ -207,10 +239,26 @@ export default function ImageTransferScreen() {
     setLocalHistory(prev => prev.filter(r => r.id !== id));
   };
 
+  // ===== 流录制控制 =====
+  const handleToggleStreamRecord = () => {
+    if (streamRecording) {
+      setStreamRecording(false);
+      setStreamRecordMsg(`录制完成，共 ${streamRecordedFrames.length} 帧`);
+    } else {
+      setStreamRecordedFrames([]);
+      setStreamRecordMsg(null);
+      setStreamRecording(true);
+    }
+  };
+
   const isConnected = !!connectedDevice;
   const pct = imageProgress
     ? Math.round((imageProgress.receivedChunks / imageProgress.totalChunks) * 100)
     : 0;
+
+  const currentStreamFrame = streamMode && streamBuffer.length > 0
+    ? streamBuffer[streamFrameIdx % streamBuffer.length]
+    : null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: DARK_BG }}>
@@ -224,18 +272,123 @@ export default function ImageTransferScreen() {
             {isConnected ? `已连接: ${connectedDevice.name ?? connectedDevice.address}` : '未连接设备'}
           </Text>
         </View>
-        {localHistory.length > 0 && (
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          {/* 流式模式切换 */}
           <Pressable
             cssInterop={false}
-            onPress={() => { clearImageHistory(); setLocalHistory([]); }}
-            style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: 6 })}
+            onPress={() => { setStreamMode(m => !m); setStreamFrameIdx(0); }}
+            style={({ pressed }) => ({
+              paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4,
+              borderWidth: 1,
+              borderColor: streamMode ? GREEN : BORDER,
+              backgroundColor: streamMode ? `${GREEN}18` : 'transparent',
+              opacity: pressed ? 0.7 : 1,
+            })}
           >
-            <Ionicons name="trash-outline" size={18} color={TEXT_MUTED} />
+            <Text style={{ color: streamMode ? GREEN : TEXT_MUTED, fontSize: 10, fontWeight: '700' }}>
+              {streamMode ? '流式 ON' : '流式 OFF'}
+            </Text>
           </Pressable>
-        )}
+          {localHistory.length > 0 && (
+            <Pressable
+              cssInterop={false}
+              onPress={() => { clearImageHistory(); setLocalHistory([]); }}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: 6 })}
+            >
+              <Ionicons name="trash-outline" size={18} color={TEXT_MUTED} />
+            </Pressable>
+          )}
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }} contentInsetAdjustmentBehavior="automatic">
+
+        {/* ===== 流式实时视窗 ===== */}
+        {streamMode && (
+          <View style={{ backgroundColor: CARD_BG, borderWidth: 1, borderColor: GREEN, borderRadius: 2, overflow: 'hidden' }}>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: BORDER,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: GREEN }} />
+                <Text style={{ color: GREEN, fontSize: 11, fontWeight: '800' }}>
+                  流式视窗  {streamBuffer.length > 0 ? `[${(streamFrameIdx % streamBuffer.length) + 1}/${streamBuffer.length}]` : '[无帧]'}
+                </Text>
+              </View>
+              {/* 流录制按钮 */}
+              <Pressable
+                cssInterop={false}
+                onPress={handleToggleStreamRecord}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                  paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, borderWidth: 1,
+                  borderColor: streamRecording ? RED : BORDER,
+                  backgroundColor: streamRecording ? `${RED}20` : 'transparent',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: streamRecording ? RED : TEXT_MUTED }} />
+                <Text style={{ color: streamRecording ? RED : TEXT_MUTED, fontSize: 10, fontWeight: '700' }}>
+                  {streamRecording ? `录制 ${streamRecordedFrames.length}帧` : '录制'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {currentStreamFrame ? (
+              <Pressable onPress={() => setPreviewRecord(currentStreamFrame)}>
+                <Image
+                  source={{ uri: currentStreamFrame.dataUri }}
+                  style={{ width: '100%', aspectRatio: 4 / 3 }}
+                  contentFit="contain"
+                />
+                <View style={{
+                  position: 'absolute', bottom: 6, right: 8,
+                  backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 4,
+                  paddingHorizontal: 6, paddingVertical: 2,
+                }}>
+                  <Text style={{ color: GREEN, fontSize: 9, fontFamily: 'monospace' }}>
+                    {formatTime(currentStreamFrame.receivedAt)}
+                  </Text>
+                </View>
+              </Pressable>
+            ) : (
+              <View style={{ height: 160, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="videocam-outline" size={32} color={TEXT_MUTED} />
+                <Text style={{ color: TEXT_MUTED, fontSize: 12, marginTop: 8 }}>等待图像帧…</Text>
+              </View>
+            )}
+
+            {/* 帧缓冲区缩略图 */}
+            {streamBuffer.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ padding: 8, borderTopWidth: 1, borderTopColor: BORDER }}>
+                {streamBuffer.map((item, idx) => (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => setStreamFrameIdx(idx)}
+                    style={{
+                      marginRight: 6, borderWidth: 1,
+                      borderColor: streamFrameIdx % streamBuffer.length === idx ? GREEN : BORDER,
+                      borderRadius: 2,
+                    }}
+                  >
+                    <Image
+                      source={{ uri: item.dataUri }}
+                      style={{ width: 64, height: 48 }}
+                      contentFit="cover"
+                    />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+
+            {streamRecordMsg && (
+              <View style={{ padding: 8, borderTopWidth: 1, borderTopColor: BORDER }}>
+                <Text style={{ color: GREEN, fontSize: 11 }}>{streamRecordMsg}</Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* ===== 当前接收进度卡 ===== */}
         <View style={{ backgroundColor: CARD_BG, borderWidth: 1, borderColor: imageProgress ? CYAN : BORDER, borderRadius: 2, padding: 12 }}>

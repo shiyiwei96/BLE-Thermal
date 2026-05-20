@@ -5,6 +5,7 @@
  * - 触摸框选区域温度分析
  * - 历史帧列表 + 回放
  * - 保存当前帧到相册
+ * - 热相录制与导出（JSON/CSV/图像序列）
  */
 import React, { useCallback, useRef, useState } from 'react';
 import {
@@ -21,7 +22,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useBle } from '@/lib/bleContext';
 import {
   renderThermalPixels,
@@ -30,7 +31,16 @@ import {
   toFahrenheit,
   COLORMAP_LABELS,
 } from '@/lib/thermalAnalysis';
-import type { ThermalColormap, ThermalFrame, ThermalRegionStats } from '@/lib/types';
+import type { ThermalColormap, ThermalFrame, ThermalRecording, ThermalRegionStats } from '@/lib/types';
+import {
+  createRecording,
+  appendFrame,
+  stopRecording,
+  exportAsJson,
+  exportAsCsv,
+  exportImageSequence,
+  formatDuration,
+} from '@/lib/thermalRecording';
 
 // ============ 颜色常量 ============
 const DARK_BG      = '#121212';
@@ -141,6 +151,7 @@ export default function ThermalScreen() {
     updateSettings,
     clearThermalFrames,
   } = useBle();
+  const router = useRouter();
 
   const { width } = useWindowDimensions();
   const imgWidth = width - 32;
@@ -164,16 +175,30 @@ export default function ThermalScreen() {
   // 历史帧缓存的 dataUri（用于缩略图显示）
   const [frameUriCache, setFrameUriCache] = useState<Record<string, string>>({});
 
+  // ===== 录制状态 =====
+  const [recording, setRecording] = useState<ThermalRecording | null>(null);
+  const recordingRef = useRef<ThermalRecording | null>(null);
+  const [completedRecordings, setCompletedRecordings] = useState<ThermalRecording[]>([]);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null); // 'json'|'csv'|'img'
+
   const colormap = settings.thermalColormap;
   const unit = settings.thermalUnit;
 
-  // 同步新帧到缓存（仅最新一帧）
+  // 同步新帧到缓存（仅最新一帧）+ 追加到录制
   React.useEffect(() => {
     if (latestThermalFrame && latestThermalDataUri) {
       setFrameUriCache(prev => ({
         ...prev,
         [latestThermalFrame.id]: latestThermalDataUri,
       }));
+      // 追加到录制中
+      if (recordingRef.current) {
+        const updated = appendFrame(recordingRef.current, latestThermalFrame, latestThermalDataUri);
+        recordingRef.current = updated;
+        setRecording({ ...updated });
+      }
     }
   }, [latestThermalFrame, latestThermalDataUri]);
 
@@ -193,6 +218,39 @@ export default function ThermalScreen() {
     setSelectionBox(null);
     setRegionStats(null);
   }, []));
+
+  // ===== 录制控制 =====
+  const handleStartRecording = useCallback(() => {
+    if (!connectedDevice) return;
+    const rec = createRecording(connectedDevice.id, connectedDevice.name ?? connectedDevice.id);
+    recordingRef.current = rec;
+    setRecording(rec);
+    setExportMsg(null);
+    setExportError(null);
+  }, [connectedDevice]);
+
+  const handleStopRecording = useCallback(() => {
+    if (!recordingRef.current) return;
+    const stopped = stopRecording(recordingRef.current);
+    recordingRef.current = null;
+    setRecording(null);
+    setCompletedRecordings(prev => [stopped, ...prev].slice(0, 10));
+  }, []);
+
+  const handleExport = useCallback(async (rec: ThermalRecording, type: 'json' | 'csv' | 'img') => {
+    setExporting(type);
+    setExportMsg(null);
+    setExportError(null);
+    try {
+      if (type === 'json') await exportAsJson(rec);
+      else if (type === 'csv') await exportAsCsv(rec);
+      else await exportImageSequence(rec);
+      setExportMsg(`导出成功（${type.toUpperCase()}）`);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : '导出失败');
+    }
+    setExporting(null);
+  }, []);
 
   const displayFrame = viewFrame ?? latestThermalFrame;
   const displayUri   = viewDataUri ?? latestThermalDataUri;
@@ -277,7 +335,7 @@ export default function ThermalScreen() {
               {isConnected ? `已连接: ${connectedDevice.name ?? connectedDevice.address}` : '未连接设备'}
             </Text>
           </View>
-          {/* 实时/历史切换指示 */}
+          {/* 实时/历史切换指示 + 录制按钮 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             {!isLive && (
               <Pressable
@@ -289,6 +347,38 @@ export default function ThermalScreen() {
                 })}
               >
                 <Text style={{ color: CYAN, fontSize: 10, fontWeight: '800' }}>回到实时</Text>
+              </Pressable>
+            )}
+            {/* 录制按钮 */}
+            {isConnected && (
+              <Pressable
+                cssInterop={false}
+                onPress={recording ? handleStopRecording : handleStartRecording}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                  paddingHorizontal: 10, paddingVertical: 4, borderRadius: 2, borderWidth: 1,
+                  borderColor: recording ? RED : GREEN,
+                  backgroundColor: recording ? `${RED}20` : `${GREEN}15`,
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <View style={{
+                  width: 6, height: 6, borderRadius: 3,
+                  backgroundColor: recording ? RED : GREEN,
+                }} />
+                <Text style={{ color: recording ? RED : GREEN, fontSize: 10, fontWeight: '800' }}>
+                  {recording ? `${recording.frameCount}帧` : '录制'}
+                </Text>
+              </Pressable>
+            )}
+            {/* 录制管理 */}
+            {completedRecordings.length > 0 && (
+              <Pressable
+                cssInterop={false}
+                onPress={() => router.push('/(app)/thermal-recordings')}
+                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: 4 })}
+              >
+                <Ionicons name="folder-open" size={16} color={ORANGE} />
               </Pressable>
             )}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -568,6 +658,112 @@ export default function ThermalScreen() {
             <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }}>
               分辨率: {displayFrame.width} × {displayFrame.height}  ·  像素数: {(displayFrame.width * displayFrame.height).toLocaleString()}  ·  {formatTime(displayFrame.receivedAt)}
             </Text>
+          </View>
+        )}
+
+        {/* ===== 录制状态卡片 ===== */}
+        {recording && (
+          <View style={{
+            backgroundColor: `${RED}12`, borderWidth: 1, borderColor: `${RED}60`,
+            borderRadius: 2, padding: 12,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: RED }} />
+              <Text style={{ color: RED, fontSize: 12, fontWeight: '800', flex: 1 }}>
+                录制中：{recording.name}
+              </Text>
+              <Pressable
+                cssInterop={false}
+                onPress={handleStopRecording}
+                style={({ pressed }) => ({
+                  backgroundColor: `${RED}30`, borderRadius: 4,
+                  paddingHorizontal: 12, paddingVertical: 5, opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ color: RED, fontSize: 11, fontWeight: '800' }}>停止</Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <Text style={{ color: TEXT_MUTED, fontSize: 11 }}>
+                帧数: <Text style={{ color: TEXT_PRIMARY, fontWeight: '700' }}>{recording.frameCount}</Text>
+              </Text>
+              <Text style={{ color: TEXT_MUTED, fontSize: 11 }}>
+                时长: <Text style={{ color: TEXT_PRIMARY, fontWeight: '700' }}>{formatDuration(recording.durationMs)}</Text>
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* ===== 已完成录制列表 ===== */}
+        {completedRecordings.length > 0 && (
+          <View style={{ backgroundColor: CARD_BG, borderWidth: 1, borderColor: BORDER, borderRadius: 2, padding: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <Text style={{ color: TEXT_PRIMARY, fontSize: 11, fontWeight: '700' }}>
+                已完成录制 ({completedRecordings.length})
+              </Text>
+            </View>
+
+            {exportMsg && (
+              <View style={{ backgroundColor: `${GREEN}15`, borderRadius: 4, padding: 8, marginBottom: 8 }}>
+                <Text style={{ color: GREEN, fontSize: 11 }}>{exportMsg}</Text>
+              </View>
+            )}
+            {exportError && (
+              <View style={{ backgroundColor: `${RED}15`, borderRadius: 4, padding: 8, marginBottom: 8 }}>
+                <Text style={{ color: RED, fontSize: 11 }}>{exportError}</Text>
+              </View>
+            )}
+
+            {completedRecordings.map(rec => (
+              <View key={rec.id} style={{
+                borderWidth: 1, borderColor: BORDER, borderRadius: 4,
+                padding: 10, marginBottom: 8,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Text style={{ color: TEXT_PRIMARY, fontSize: 12, fontWeight: '700', flex: 1 }}>
+                    {rec.name}
+                  </Text>
+                  <Text style={{ color: TEXT_MUTED, fontSize: 10 }}>
+                    {rec.frameCount} 帧 · {formatDuration(rec.durationMs)}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  {(['json', 'csv', 'img'] as const).map(type => (
+                    <Pressable
+                      key={type}
+                      cssInterop={false}
+                      disabled={!!exporting}
+                      onPress={() => handleExport(rec, type)}
+                      style={({ pressed }) => ({
+                        flex: 1, paddingVertical: 6, borderRadius: 4, alignItems: 'center',
+                        borderWidth: 1,
+                        borderColor: exporting === type ? CYAN : BORDER,
+                        backgroundColor: exporting === type ? `${CYAN}20` : `${BORDER}30`,
+                        opacity: pressed || (!!exporting && exporting !== type) ? 0.5 : 1,
+                      })}
+                    >
+                      {exporting === type
+                        ? <ActivityIndicator size="small" color={CYAN} />
+                        : <Text style={{ color: TEXT_MUTED, fontSize: 10, fontWeight: '700' }}>
+                            {type === 'img' ? '图像序列' : type.toUpperCase()}
+                          </Text>
+                      }
+                    </Pressable>
+                  ))}
+                  <Pressable
+                    cssInterop={false}
+                    onPress={() => setCompletedRecordings(p => p.filter(r => r.id !== rec.id))}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4,
+                      borderWidth: 1, borderColor: `${RED}40`,
+                      opacity: pressed ? 0.6 : 1,
+                    })}
+                  >
+                    <Ionicons name="trash-outline" size={13} color={RED} />
+                  </Pressable>
+                </View>
+              </View>
+            ))}
           </View>
         )}
 

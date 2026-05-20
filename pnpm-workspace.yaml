@@ -16,7 +16,7 @@ catalog:
   expo-image-picker: ~55.0.19
   expo-linear-gradient: ~55.0.8
   expo-media-library: ~55.0.15
-  expo-notifications: ~55.0.12
+  expo-notifications: ~55.0.23
   expo-router: 55.0.5
   expo-video: 55.0.5
   nativewind: ^4.2.3

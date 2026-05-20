@@ -110,6 +110,15 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="multi-device"
+        options={{
+          title: '多设备',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="git-network" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

@@ -1,6 +1,7 @@
 /**
  * 蓝牙全局状态管理 Context
  * 使用 react-native-ble-plx 实现真实 BLE 扫描、连接、通知订阅、数据写入
+ * 支持同时连接最多 4 个设备（多设备管理）
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { State as BleAdapterState, type Subscription } from 'react-native-ble-plx';
@@ -13,13 +14,21 @@ import type {
   DataAlertRule,
   DataLogEntry,
   DataStats,
+  DeviceColorLabel,
+  DeviceRuntimeInfo,
   FieldMapping,
   ParsedFieldState,
   ImageTransferRecord,
   ImageTransferProgress,
   ThermalFrame,
 } from './types';
-import { DEFAULT_BLE_UUID, DEFAULT_SERIAL_CONFIG, DEFAULT_IMG_THERMAL_UUID } from './types';
+import {
+  DEFAULT_BLE_UUID,
+  DEFAULT_SERIAL_CONFIG,
+  DEFAULT_IMG_THERMAL_UUID,
+  DEVICE_COLORS,
+  MAX_CONNECTED_DEVICES,
+} from './types';
 import {
   DEFAULT_ALERT_RULES,
   DEFAULT_FIELD_MAPPINGS,
@@ -46,6 +55,7 @@ import {
   pixelsToDataUri,
   MAX_THERMAL_HISTORY,
 } from './thermalAnalysis';
+import { sendAlertNotification } from './notificationService';
 
 // ============ 默认值 ============
 const DEFAULT_SETTINGS: AppSettings = {
@@ -60,6 +70,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   imgThermalUuid: DEFAULT_IMG_THERMAL_UUID,
   thermalColormap: 'iron',
   thermalUnit: 'C',
+  notificationsEnabled: false,
+  autoCloudSync: false,
+  temperatureAlertThreshold: 85,
+  streamBufferSize: 3,
 };
 
 const DEFAULT_STATS: DataStats = {
@@ -73,11 +87,12 @@ const DEFAULT_STATS: DataStats = {
 const MAX_LOG_ENTRIES = 1000;
 const MAX_RSSI_HISTORY = 60;
 const MAX_FIELD_HISTORY = 60;
+const MAX_TEMP_HISTORY = 120; // 每设备最多120个温度历史点
 
 // ============ Context 类型 ============
 interface BleContextType extends BleState {
-  bleReady: boolean;              // 蓝牙适配器是否就绪
-  bleError: string | null;        // 蓝牙状态错误信息
+  bleReady: boolean;
+  bleError: string | null;
   startScan: () => Promise<void>;
   stopScan: () => void;
   connectDevice: (device: BleDevice) => Promise<void>;
@@ -96,13 +111,24 @@ interface BleContextType extends BleState {
   deleteFieldMapping: (fieldKey: string) => void;
   // 图传
   imageHistory: ImageTransferRecord[];
-  imageProgress: ImageTransferProgress | null;  // 接收中的进度
+  imageProgress: ImageTransferProgress | null;
   clearImageHistory: () => void;
   // 热相
-  thermalFrames: ThermalFrame[];                // 最近历史帧
+  thermalFrames: ThermalFrame[];
   latestThermalFrame: ThermalFrame | null;
-  latestThermalDataUri: string | null;          // 最新帧伪彩色图像
+  latestThermalDataUri: string | null;
   clearThermalFrames: () => void;
+  // ── 多设备管理 ──
+  connectedDevices: BleDevice[];
+  activeDeviceId: string | null;
+  deviceRuntimeInfo: Record<string, DeviceRuntimeInfo>;
+  setActiveDeviceId: (deviceId: string) => void;
+  connectAdditionalDevice: (device: BleDevice) => Promise<void>;
+  disconnectSpecificDevice: (deviceId: string) => Promise<void>;
+  disconnectAllDevices: () => Promise<void>;
+  updateDeviceInfo: (deviceId: string, info: Partial<Pick<DeviceRuntimeInfo, 'customName' | 'colorLabel'>>) => void;
+  /** 添加外部预警（来自模型比对等模块）*/
+  addExternalAlert: (entry: AlertEntry) => void;
 }
 
 const BleContext = createContext<BleContextType | null>(null);
@@ -136,7 +162,12 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const [latestThermalFrame, setLatestThermalFrame] = useState<ThermalFrame | null>(null);
   const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(null);
 
-  // 订阅/定时器引用
+  // ===== 多设备状态 =====
+  const [connectedDevices, setConnectedDevices] = useState<BleDevice[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
+  const [deviceRuntimeInfo, setDeviceRuntimeInfo] = useState<Record<string, DeviceRuntimeInfo>>({});
+
+  // 订阅/定时器引用（主设备）
   const notifySubscriptionRef = useRef<Subscription | null>(null);
   const disconnectSubscriptionRef = useRef<Subscription | null>(null);
   const rssiTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -144,17 +175,25 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const dataTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 副设备订阅 Map（deviceId → subscription数组）
+  const secondarySubsRef = useRef<Map<string, Subscription[]>>(new Map());
+  const secondaryRssiTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+
   // 速率计算缓冲
   const rxBytesBufferRef = useRef<number>(0);
   const txBytesBufferRef = useRef<number>(0);
   const lastRssiAlertRef = useRef<number>(0);
   const ruleLastAlertRef = useRef<Record<string, number>>({});
+  const tempAlertLastRef = useRef<Record<string, number>>({});
 
   const settingsRef = useRef<AppSettings>(DEFAULT_SETTINGS);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
 
   const connectedDeviceRef = useRef<BleDevice | null>(null);
   useEffect(() => { connectedDeviceRef.current = connectedDevice; }, [connectedDevice]);
+
+  const connectedDevicesRef = useRef<BleDevice[]>([]);
+  useEffect(() => { connectedDevicesRef.current = connectedDevices; }, [connectedDevices]);
 
   // ============ 加载保存设置 ============
   useEffect(() => {
@@ -192,10 +231,23 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, []);
 
+  // ============ 通知辅助 ============
+  const maybeNotify = useCallback((entry: AlertEntry) => {
+    if (settingsRef.current.notificationsEnabled) {
+      sendAlertNotification(entry.type, entry.deviceName, entry.detail);
+    }
+  }, []);
+
   // ============ 添加预警/日志 ============
   const addAlert = useCallback((entry: AlertEntry) => {
     setAlerts(prev => [entry, ...prev].slice(0, 200));
-  }, []);
+    maybeNotify(entry);
+  }, [maybeNotify]);
+
+  const addExternalAlert = useCallback((entry: AlertEntry) => {
+    setAlerts(prev => [entry, ...prev].slice(0, 200));
+    maybeNotify(entry);
+  }, [maybeNotify]);
 
   const addLog = useCallback((entry: DataLogEntry) => {
     setDataLogs(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES));
@@ -210,6 +262,40 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       ].slice(-MAX_RSSI_HISTORY),
     }));
   }, []);
+
+  // ============ 更新设备运行时信息（温度历史） ============
+  const updateDeviceTempHistory = useCallback((
+    deviceId: string,
+    maxTemp: number, minTemp: number, avgTemp: number
+  ) => {
+    const now = Date.now();
+    setDeviceRuntimeInfo(prev => {
+      const info = prev[deviceId];
+      if (!info) return prev;
+      const newPoint = { ts: now, max: maxTemp, min: minTemp, avg: avgTemp };
+      return {
+        ...prev,
+        [deviceId]: {
+          ...info,
+          latestTempMax: maxTemp,
+          latestTempMin: minTemp,
+          latestTempAvg: avgTemp,
+          tempHistory: [...info.tempHistory, newPoint].slice(-MAX_TEMP_HISTORY),
+        },
+      };
+    });
+
+    // 温度超限告警
+    const threshold = settingsRef.current.temperatureAlertThreshold;
+    const lastTime = tempAlertLastRef.current[deviceId] ?? 0;
+    if (maxTemp > threshold && Date.now() - lastTime > 60000) {
+      tempAlertLastRef.current[deviceId] = Date.now();
+      const dev = connectedDevicesRef.current.find(d => d.id === deviceId) ?? null;
+      const entry = createAlertEntry('TEMPERATURE_HIGH', dev, settingsRef.current, `${maxTemp.toFixed(1)}`);
+      setAlerts(a => [entry, ...a].slice(0, 200));
+      maybeNotify(entry);
+    }
+  }, [maybeNotify]);
 
   // ============ 处理解析字段 + 触发报警 ============
   const handleParsedFields = useCallback((
@@ -250,8 +336,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       const detail = `字段 ${rule.fieldKey} = ${fieldVal}，${rule.operator} ${rule.value}`;
       const alert = createAlertEntry('DATA_THRESHOLD', device, currentSettings, detail);
       setAlerts(a => [alert, ...a].slice(0, 200));
+      maybeNotify(alert);
     }
-  }, []);
+  }, [maybeNotify]);
 
   // ============ 重置数据超时定时器 ============
   const resetDataTimeout = useCallback(() => {
@@ -261,10 +348,11 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       if (!dev) return;
       const alert = createAlertEntry('DATA_TIMEOUT', dev, settingsRef.current);
       setAlerts(a => [alert, ...a].slice(0, 200));
+      maybeNotify(alert);
     }, settingsRef.current.dataTimeoutSeconds * 1000);
-  }, []);
+  }, [maybeNotify]);
 
-  // ============ 停止所有后台任务 ============
+  // ============ 停止主设备后台任务 ============
   const stopAllTasks = useCallback(() => {
     notifySubscriptionRef.current?.remove();
     notifySubscriptionRef.current = null;
@@ -277,17 +365,37 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     txBytesBufferRef.current = 0;
   }, []);
 
+  // ============ 停止副设备订阅 ============
+  const stopSecondaryDevice = useCallback((deviceId: string) => {
+    const subs = secondarySubsRef.current.get(deviceId) ?? [];
+    subs.forEach(s => s.remove());
+    secondarySubsRef.current.delete(deviceId);
+    const t = secondaryRssiTimersRef.current.get(deviceId);
+    if (t) { clearInterval(t); secondaryRssiTimersRef.current.delete(deviceId); }
+  }, []);
+
+  // ============ 为设备初始化 DeviceRuntimeInfo ============
+  const initDeviceRuntimeInfo = useCallback((deviceId: string) => {
+    setDeviceRuntimeInfo(prev => {
+      if (prev[deviceId]) return prev;
+      const usedColors = Object.values(prev).map(i => i.colorLabel);
+      const color = (DEVICE_COLORS.find(c => !usedColors.includes(c)) ?? 'cyan') as DeviceColorLabel;
+      return {
+        ...prev,
+        [deviceId]: { deviceId, colorLabel: color, tempHistory: [] },
+      };
+    });
+  }, []);
+
   // ============ 扫描设备 ============
   const startScan = useCallback(async () => {
     if (isScanning) return;
 
-    // Android 权限检查
     const hasPermission = await requestAndroidPermissions();
     if (!hasPermission) {
       setBleError('蓝牙权限未授予，请前往设置授予权限');
       return;
     }
-
     if (!bleReady) {
       setBleError('蓝牙未就绪，请确认蓝牙已开启');
       return;
@@ -308,7 +416,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         setDevices(prev => {
           const exists = prev.findIndex(d => d.id === adapted.id);
           if (exists >= 0) {
-            // 更新 RSSI
             const updated = [...prev];
             updated[exists] = { ...updated[exists], rssi: adapted.rssi };
             return updated;
@@ -318,7 +425,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // 10 秒后自动停止扫描
     scanStopTimerRef.current = setTimeout(() => {
       bleManager.stopDeviceScan();
       setIsScanning(false);
@@ -331,185 +437,300 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setIsScanning(false);
   }, []);
 
-  // ============ 连接设备 ============
+  // ============ 内部：连接设备并设置主状态 ============
+  const _connectPrimary = useCallback(async (device: BleDevice) => {
+    const connectedPlx = await bleManager.connectToDevice(device.id, {
+      autoConnect: false,
+      requestMTU: 512,
+    });
+    await connectedPlx.discoverAllServicesAndCharacteristics();
+
+    const adapted = adaptDevice(connectedPlx, true);
+    setConnectedDevice(adapted);
+    setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
+    setStats(DEFAULT_STATS);
+    setParsedFields({});
+    ruleLastAlertRef.current = {};
+
+    const currentUuid = settingsRef.current.bleUuid;
+    const { serviceUuid, rxCharUuid } = currentUuid;
+    const { imageCharUuid, thermalCharUuid } = settingsRef.current.imgThermalUuid;
+
+    // 订阅 RX
+    notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
+      serviceUuid, rxCharUuid,
+      (error, characteristic) => {
+        if (error || !characteristic?.value) return;
+        const bytes = base64ToBytes(characteristic.value);
+        const logEntry = createLogEntry('RX', bytes, device.id);
+        addLog(logEntry);
+        rxBytesBufferRef.current += bytes.length;
+        if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
+          handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
+        }
+        resetDataTimeout();
+      }
+    );
+
+    // 订阅图传
+    connectedPlx.monitorCharacteristicForService(
+      serviceUuid, imageCharUuid,
+      (_err, characteristic) => {
+        if (!characteristic?.value) return;
+        const bytes = base64ToBytes(characteristic.value);
+        const chunk = parseImageChunk(bytes);
+        if (!chunk) return;
+
+        const prev = imageProgressRef.current;
+        const isNewTransfer = !prev || prev.totalChunks !== chunk.total;
+        const progress: ImageTransferProgress = isNewTransfer
+          ? createProgress(chunk.total)
+          : { ...prev, chunks: { ...prev.chunks } };
+
+        if (!progress.chunks[chunk.index]) {
+          progress.chunks[chunk.index] = chunk.payload;
+          progress.receivedChunks = Object.keys(progress.chunks).length;
+        }
+        imageProgressRef.current = progress;
+        setImageProgress({ ...progress });
+
+        if (progress.receivedChunks >= progress.totalChunks) {
+          const dataUri = mergeChunks(progress);
+          if (dataUri) {
+            const record = createImageRecord(genId(), dataUri, progress);
+            setImageHistory(prev => [record, ...prev].slice(0, MAX_IMAGE_HISTORY));
+          }
+          imageProgressRef.current = null;
+          setImageProgress(null);
+        }
+      }
+    );
+
+    // 订阅热相
+    connectedPlx.monitorCharacteristicForService(
+      serviceUuid, thermalCharUuid,
+      (_err, characteristic) => {
+        if (!characteristic?.value) return;
+        const bytes = base64ToBytes(characteristic.value);
+        const frame = parseThermalFrame(bytes);
+        if (!frame) return;
+
+        const colormap = settingsRef.current.thermalColormap;
+        const pixels = renderThermalPixels(frame, colormap);
+        const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
+
+        setLatestThermalFrame(frame);
+        setLatestThermalDataUri(dataUri);
+        setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
+        updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
+      }
+    );
+
+    // 连接断开监听
+    disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
+      const dev = connectedDeviceRef.current;
+      const detail = error ? error.message : '连接意外断开';
+      const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
+      setAlerts(a => [alert, ...a].slice(0, 200));
+      maybeNotify(alert);
+      setConnectedDevice(null);
+      setConnectedDevices(prev => prev.filter(d => d.id !== device.id));
+      setActiveDeviceId(prev => {
+        const remaining = connectedDevicesRef.current.filter(d => d.id !== device.id);
+        return remaining.length > 0 ? remaining[0].id : null;
+      });
+      setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: false } : d));
+      setStats(DEFAULT_STATS);
+      stopAllTasks();
+    });
+
+    // RSSI 定时读取
+    rssiTimerRef.current = setInterval(async () => {
+      try {
+        const rssi = await connectedPlx.readRSSI();
+        const rssiVal = rssi.rssi ?? -100;
+        setConnectedDevice(prev => prev ? { ...prev, rssi: rssiVal } : prev);
+        setConnectedDevices(prev => prev.map(d => d.id === device.id ? { ...d, rssi: rssiVal } : d));
+        appendRssiHistory(rssiVal);
+
+        const now = Date.now();
+        if (rssiVal < settingsRef.current.rssiThreshold && now - lastRssiAlertRef.current > 60000) {
+          lastRssiAlertRef.current = now;
+          const dev = connectedDeviceRef.current;
+          if (dev) addAlert(createAlertEntry('RSSI_WEAK', { ...dev, rssi: rssiVal }, settingsRef.current));
+        }
+      } catch { /* 忽略 */ }
+    }, 2000);
+
+    // 速率统计
+    statsTimerRef.current = setInterval(() => {
+      const rx = rxBytesBufferRef.current;
+      const tx = txBytesBufferRef.current;
+      rxBytesBufferRef.current = 0;
+      txBytesBufferRef.current = 0;
+      setStats(prev => ({
+        ...prev,
+        rxRate: rx,
+        txRate: tx,
+        totalRxBytes: prev.totalRxBytes + rx,
+        totalTxBytes: prev.totalTxBytes + tx,
+      }));
+    }, 1000);
+
+    resetDataTimeout();
+    return adapted;
+  }, [stopAllTasks, addLog, addAlert, appendRssiHistory, handleParsedFields,
+      resetDataTimeout, updateDeviceTempHistory, maybeNotify]);
+
+  // ============ 连接主设备（第一个设备） ============
   const connectDevice = useCallback(async (device: BleDevice) => {
+    if (connectedDevicesRef.current.length >= MAX_CONNECTED_DEVICES) {
+      setBleError(`已达到最大连接数（${MAX_CONNECTED_DEVICES}），请先断开其他设备`);
+      return;
+    }
     stopScan();
     setBleError(null);
-
     try {
-      // 连接设备
+      initDeviceRuntimeInfo(device.id);
+      const adapted = await _connectPrimary(device);
+      setConnectedDevices(prev => {
+        const filtered = prev.filter(d => d.id !== device.id);
+        return [...filtered, { ...adapted, isConnected: true }];
+      });
+      setActiveDeviceId(device.id);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '连接失败';
+      setBleError(`连接失败：${msg}`);
+    }
+  }, [stopScan, _connectPrimary, initDeviceRuntimeInfo]);
+
+  // ============ 追加连接副设备 ============
+  const connectAdditionalDevice = useCallback(async (device: BleDevice) => {
+    if (connectedDevicesRef.current.length >= MAX_CONNECTED_DEVICES) {
+      setBleError(`已达到最大连接数（${MAX_CONNECTED_DEVICES}），请先断开其他设备`);
+      return;
+    }
+    if (connectedDevicesRef.current.some(d => d.id === device.id)) {
+      setBleError('该设备已连接');
+      return;
+    }
+    stopScan();
+    setBleError(null);
+    try {
+      initDeviceRuntimeInfo(device.id);
       const connectedPlx = await bleManager.connectToDevice(device.id, {
         autoConnect: false,
         requestMTU: 512,
       });
-
-      // 发现所有 Services 和 Characteristics
       await connectedPlx.discoverAllServicesAndCharacteristics();
-
       const adapted = adaptDevice(connectedPlx, true);
-      setConnectedDevice(adapted);
-      setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
-      setStats(DEFAULT_STATS);
-      setParsedFields({});
-      ruleLastAlertRef.current = {};
 
-      const currentUuid = settingsRef.current.bleUuid;
-      const serviceUuid = currentUuid.serviceUuid;
-      const rxCharUuid = currentUuid.rxCharUuid;
-      const txCharUuid = currentUuid.txCharUuid;
+      const { serviceUuid } = settingsRef.current.bleUuid;
+      const { thermalCharUuid } = settingsRef.current.imgThermalUuid;
+      const subs: Subscription[] = [];
 
-      // 订阅 RX 通知特征值
-      notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
-        serviceUuid,
-        rxCharUuid,
-        (error, characteristic) => {
-          if (error) {
-            // 连接断开会触发此回调，不重复处理
-            return;
-          }
-          if (!characteristic?.value) return;
-
-          const bytes = base64ToBytes(characteristic.value);
-          const logEntry = createLogEntry('RX', bytes, device.id);
-          addLog(logEntry);
-          rxBytesBufferRef.current += bytes.length;
-
-          if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
-            handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
-          }
-
-          resetDataTimeout();
-        }
-      );
-
-      // ===== 订阅图传通知特征值 =====
-      const { imageCharUuid, thermalCharUuid } = settingsRef.current.imgThermalUuid;
-      connectedPlx.monitorCharacteristicForService(
-        serviceUuid,
-        imageCharUuid,
-        (_err, characteristic) => {
-          if (!characteristic?.value) return;
-          const bytes = base64ToBytes(characteristic.value);
-          const chunk = parseImageChunk(bytes);
-          if (!chunk) return;
-
-          // 新传输开始（或总包数变化）
-          const prev = imageProgressRef.current;
-          const isNewTransfer = !prev || prev.totalChunks !== chunk.total;
-          const progress: ImageTransferProgress = isNewTransfer
-            ? createProgress(chunk.total)
-            : { ...prev, chunks: { ...prev.chunks } };
-
-          if (!progress.chunks[chunk.index]) {
-            progress.chunks[chunk.index] = chunk.payload;
-            progress.receivedChunks = Object.keys(progress.chunks).length;
-          }
-          imageProgressRef.current = progress;
-          setImageProgress({ ...progress });
-
-          // 所有包收到，合并成图像
-          if (progress.receivedChunks >= progress.totalChunks) {
-            const dataUri = mergeChunks(progress);
-            if (dataUri) {
-              const record = createImageRecord(genId(), dataUri, progress);
-              setImageHistory(prev => [record, ...prev].slice(0, MAX_IMAGE_HISTORY));
-            }
-            imageProgressRef.current = null;
-            setImageProgress(null);
-          }
-        }
-      );
-
-      // ===== 订阅热相通知特征值 =====
-      connectedPlx.monitorCharacteristicForService(
-        serviceUuid,
-        thermalCharUuid,
+      // 仅订阅热相（副设备温度监测）
+      const thermalSub = connectedPlx.monitorCharacteristicForService(
+        serviceUuid, thermalCharUuid,
         (_err, characteristic) => {
           if (!characteristic?.value) return;
           const bytes = base64ToBytes(characteristic.value);
           const frame = parseThermalFrame(bytes);
           if (!frame) return;
-
-          const colormap = settingsRef.current.thermalColormap;
-          const pixels = renderThermalPixels(frame, colormap);
-          const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
-
-          setLatestThermalFrame(frame);
-          setLatestThermalDataUri(dataUri);
-          setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
+          updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
         }
       );
+      subs.push(thermalSub);
 
-      // 监听连接断开
-      disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
-        const dev = connectedDeviceRef.current;
-        const detail = error ? error.message : '连接意外断开';
-        const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
-        setAlerts(a => [alert, ...a].slice(0, 200));
-        setConnectedDevice(null);
-        setDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
-        setStats(DEFAULT_STATS);
-        stopAllTasks();
+      // 断开监听
+      const discSub = connectedPlx.onDisconnected(() => {
+        stopSecondaryDevice(device.id);
+        setConnectedDevices(prev => prev.filter(d => d.id !== device.id));
+        setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: false } : d));
       });
+      subs.push(discSub);
+      secondarySubsRef.current.set(device.id, subs);
 
-      // RSSI 定时读取（每 2 秒）
-      rssiTimerRef.current = setInterval(async () => {
+      // RSSI 读取（每 3 秒）
+      const rssiTimer = setInterval(async () => {
         try {
           const rssi = await connectedPlx.readRSSI();
           const rssiVal = rssi.rssi ?? -100;
-          setConnectedDevice(prev => prev ? { ...prev, rssi: rssiVal } : prev);
-          appendRssiHistory(rssiVal);
+          setConnectedDevices(prev => prev.map(d => d.id === device.id ? { ...d, rssi: rssiVal } : d));
+        } catch { /* 忽略 */ }
+      }, 3000);
+      secondaryRssiTimersRef.current.set(device.id, rssiTimer);
 
-          // RSSI 预警
-          const now = Date.now();
-          if (
-            rssiVal < settingsRef.current.rssiThreshold &&
-            now - lastRssiAlertRef.current > 60000
-          ) {
-            lastRssiAlertRef.current = now;
-            const dev = connectedDeviceRef.current;
-            if (dev) addAlert(createAlertEntry('RSSI_WEAK', { ...dev, rssi: rssiVal }, settingsRef.current));
-          }
-        } catch { /* 读取 RSSI 失败忽略 */ }
-      }, 2000);
-
-      // 速率统计（每1秒）
-      statsTimerRef.current = setInterval(() => {
-        const rx = rxBytesBufferRef.current;
-        const tx = txBytesBufferRef.current;
-        rxBytesBufferRef.current = 0;
-        txBytesBufferRef.current = 0;
-        setStats(prev => ({
-          ...prev,
-          rxRate: rx,
-          txRate: tx,
-          totalRxBytes: prev.totalRxBytes + rx,
-          totalTxBytes: prev.totalTxBytes + tx,
-        }));
-      }, 1000);
-
-      // 初始数据超时定时器
-      resetDataTimeout();
-
+      setConnectedDevices(prev => {
+        const filtered = prev.filter(d => d.id !== device.id);
+        return [...filtered, { ...adapted, isConnected: true }];
+      });
+      setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '连接失败';
-      setBleError(`连接失败：${msg}`);
+      setBleError(`连接副设备失败：${msg}`);
     }
-  }, [stopScan, addLog, addAlert, appendRssiHistory, handleParsedFields, resetDataTimeout, stopAllTasks]);
+  }, [stopScan, initDeviceRuntimeInfo, stopSecondaryDevice, updateDeviceTempHistory]);
 
-  // ============ 断开设备 ============
-  const disconnectDevice = useCallback(async () => {
-    const dev = connectedDeviceRef.current;
-    if (dev) {
-      try {
-        await bleManager.cancelDeviceConnection(dev.id);
-      } catch { /* 忽略断开错误 */ }
+  // ============ 断开特定设备 ============
+  const disconnectSpecificDevice = useCallback(async (deviceId: string) => {
+    const isActive = activeDeviceId === deviceId;
+    try { await bleManager.cancelDeviceConnection(deviceId); } catch { /* 忽略 */ }
+
+    if (isActive) {
+      stopAllTasks();
+      setConnectedDevice(null);
+      setStats(DEFAULT_STATS);
+    } else {
+      stopSecondaryDevice(deviceId);
     }
+
+    setConnectedDevices(prev => {
+      const next = prev.filter(d => d.id !== deviceId);
+      if (isActive && next.length > 0) {
+        setActiveDeviceId(next[0].id);
+      } else if (isActive) {
+        setActiveDeviceId(null);
+      }
+      return next;
+    });
+    setDevices(prev => prev.map(d => d.id === deviceId ? { ...d, isConnected: false } : d));
+  }, [activeDeviceId, stopAllTasks, stopSecondaryDevice]);
+
+  // ============ 断开所有设备 ============
+  const disconnectAllDevices = useCallback(async () => {
+    const all = connectedDevicesRef.current;
+    await Promise.all(all.map(d => bleManager.cancelDeviceConnection(d.id).catch(() => {})));
     stopAllTasks();
+    all.forEach(d => stopSecondaryDevice(d.id));
     setConnectedDevice(null);
+    setConnectedDevices([]);
+    setActiveDeviceId(null);
     setDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
     setStats(DEFAULT_STATS);
-  }, [stopAllTasks]);
+  }, [stopAllTasks, stopSecondaryDevice]);
+
+  // ============ 更新设备自定义信息 ============
+  const updateDeviceInfo = useCallback((
+    deviceId: string,
+    info: Partial<Pick<DeviceRuntimeInfo, 'customName' | 'colorLabel'>>
+  ) => {
+    setDeviceRuntimeInfo(prev => {
+      const existing = prev[deviceId] ?? { deviceId, colorLabel: 'cyan' as DeviceColorLabel, tempHistory: [] };
+      return { ...prev, [deviceId]: { ...existing, ...info } };
+    });
+  }, []);
+
+  // ============ 断开设备（主/活动设备） ============
+  const disconnectDevice = useCallback(async () => {
+    if (activeDeviceId) {
+      await disconnectSpecificDevice(activeDeviceId);
+    } else {
+      // 兼容：断开单一设备
+      const dev = connectedDeviceRef.current;
+      if (dev) await disconnectSpecificDevice(dev.id);
+    }
+  }, [activeDeviceId, disconnectSpecificDevice]);
 
   // ============ 发送数据 ============
   const sendData = useCallback(async (input: string) => {
@@ -627,6 +848,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     return () => {
       stopAllTasks();
+      secondarySubsRef.current.forEach((subs) => subs.forEach(s => s.remove()));
+      secondaryRssiTimersRef.current.forEach(t => clearInterval(t));
       if (scanStopTimerRef.current) clearTimeout(scanStopTimerRef.current);
     };
   }, [stopAllTasks]);
@@ -666,6 +889,16 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       latestThermalFrame,
       latestThermalDataUri,
       clearThermalFrames,
+      // 多设备
+      connectedDevices,
+      activeDeviceId,
+      deviceRuntimeInfo,
+      setActiveDeviceId,
+      connectAdditionalDevice,
+      disconnectSpecificDevice,
+      disconnectAllDevices,
+      updateDeviceInfo,
+      addExternalAlert,
     }}>
       {children}
     </BleContext.Provider>
@@ -673,4 +906,3 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 }
 
 export { BleContext };
-
