@@ -163,6 +163,8 @@ export function getAlertDetail(type: AlertType, device: BleDevice | null, extra?
       return `与设备 ${name} 的连接意外断开`;
     case 'DATA_THRESHOLD':
       return `设备 ${name} 数据字段报警：${extra}`;
+    case 'SIMILARITY_DROP':
+      return `模型比对相似度骤降：当前评分 ${extra} 分，低于告警阈值`;
     default:
       return `设备 ${name} 发生预警：${extra ?? ''}`;
   }

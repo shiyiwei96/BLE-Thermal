@@ -28,6 +28,7 @@ const ALERT_CONFIGS: Record<AlertType, AlertConfig> = {
   CONNECTION_LOST:     { label: '连接断开', icon: 'close-circle-outline',   color: RED,    bgColor: `${RED}20` },
   DATA_THRESHOLD:      { label: '数据报警', icon: 'alert-circle-outline',   color: RED,    bgColor: `${RED}20` },
   SERIAL_DISCONNECTED: { label: '串口断开', icon: 'hardware-chip-outline',  color: RED,    bgColor: `${RED}20` },
+  SIMILARITY_DROP:     { label: '相似度骤降', icon: 'analytics-outline',    color: RED,    bgColor: `${RED}20` },
 };
 
 // 通道颜色

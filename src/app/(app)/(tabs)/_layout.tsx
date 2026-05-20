@@ -101,6 +101,15 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="model-comparison"
+        options={{
+          title: '模型比对',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="analytics" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

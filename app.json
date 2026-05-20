@@ -2,7 +2,7 @@
   "expo": {
     "name": "蓝牙数据监测预警系统",
     "slug": "bluetooth-monitor-alert",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

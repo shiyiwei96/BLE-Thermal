@@ -67,7 +67,7 @@ export interface DataLogEntry {
 }
 
 // 预警类型
-export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD' | 'SERIAL_DISCONNECTED';
+export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD' | 'SERIAL_DISCONNECTED' | 'SIMILARITY_DROP';
 
 // 预警记录条目
 export interface AlertEntry {
@@ -274,6 +274,56 @@ export interface ImportedFileRecord {
 export type ChannelView = null | 0 | 1 | 2;
 
 export const MAX_FILE_HISTORY = 20;
+
+// ============ 模型比对 ============
+
+/** 参考模型特征向量 */
+export interface ReferenceModel {
+  id: string;
+  builtAt: number;
+  /** 来源文件名 */
+  fileName: string;
+  /** 图像缩略图 dataURI */
+  thumbUri: string;
+  width: number;
+  height: number;
+  /** RGB 三通道直方图（各256级），共768维 */
+  colorHistogram: number[];
+  /** 统计矩（均值/方差/偏度/峰度 × 3通道），共12维 */
+  statisticalMoments: number[];
+  /** LBP 纹理直方图（256级） */
+  lbpHistogram: number[];
+  /** 空间网格特征（4×4子块 × 3通道 × 均值+方差），共96维 */
+  gridFeatures: number[];
+  /** 原始 RGBA 像素缓存（用于差值图） */
+  rgba: number[];
+}
+
+/** 单次比对结果 */
+export interface ComparisonResult {
+  id: string;
+  comparedAt: number;
+  /** 测试图缩略图 */
+  thumbUri: string;
+  /** 直方图交叉相似度 [0,1] */
+  histIntersection: number;
+  /** 余弦相似度 [−1,1] → 显示时映射到 [0,1] */
+  cosineSimilarity: number;
+  /** 综合评分 [0,100] */
+  overallScore: number;
+  /** 差值热图 dataURI */
+  diffMapUri: string;
+  /** 异常子块索引列表（4×4=16块，0-based row-major）*/
+  anomalyBlocks: number[];
+  /** 测试图尺寸 */
+  width: number;
+  height: number;
+}
+
+export const MAX_COMPARISON_HISTORY = 20;
+export const COMPARISON_GRID = 4;           // 4×4 子块
+export const DEFAULT_DIFF_THRESHOLD = 20;   // 子块差异阈值 %
+export const DEFAULT_SIMILARITY_ALERT = 60; // 相似度骤降告警阈值
 
 // 蓝牙全局状态
 export interface BleState {
