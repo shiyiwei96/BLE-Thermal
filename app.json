@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "蓝牙数据监测预警系统",
+    "slug": "bluetooth-monitor-alert",
+    "version": "1.0.2",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "buildNumber": "1",
+      "bundleIdentifier": "com.miaoda.appbobi1rqlk4ch",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "允许蓝牙监测预警访问蓝牙以扫描和连接蓝牙设备",
+        "NSBluetoothPeripheralUsageDescription": "允许蓝牙监测预警访问蓝牙以扫描和连接蓝牙设备"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#121212"
+      },
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 1,
+      "package": "com.miaoda.appbobi1rqlk4ch",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.hardware.usb.host"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      "expo-sqlite",
+      "expo-font",
+      "expo-system-ui",
+      "@react-native-async-storage/expo-with-async-storage",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "允许蓝牙监测预警访问蓝牙以扫描和连接蓝牙设备"
+        }
+      ]
+    ],
+    "router": {
+      "root": "src"
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
