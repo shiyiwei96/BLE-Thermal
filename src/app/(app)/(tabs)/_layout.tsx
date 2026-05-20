@@ -92,6 +92,15 @@ export default function TabsLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="file-analysis"
+        options={{
+          title: '文件分析',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="bar-chart" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

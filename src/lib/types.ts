@@ -209,6 +209,72 @@ export const DEFAULT_IMG_THERMAL_UUID: ImgThermalUuidConfig = {
   thermalCharUuid: '6E400005-B5A3-F393-E0A9-E50E24DCCA9E',
 };
 
+// ============ 文件分析 ============
+
+/** 支持的文件类型 */
+export type ImportedFileType = 'rgb' | 'raw' | 'jpg' | 'jpeg' | 'png';
+
+/** RGB 原始文件解析参数 */
+export interface RgbFileParams {
+  width: number;
+  height: number;
+  channels: 1 | 3 | 4;        // 1=灰度, 3=RGB, 4=RGBA
+  depth: 'uint8' | 'uint16';   // 像素深度
+}
+
+/** 单通道统计 */
+export interface ChannelStats {
+  mean: number;
+  variance: number;
+  min: number;
+  max: number;
+  histogram: number[];   // 256 个 bin
+}
+
+/** 图像分析结果 */
+export interface ImageAnalysisResult {
+  width: number;
+  height: number;
+  channels: number;
+  /** 各通道统计（灰度图只有 index 0）*/
+  channelStats: ChannelStats[];
+  /** 亮度统计 */
+  brightnessStats: {
+    mean: number;
+    overexposedRatio: number;   // 亮度>250 像素占比 [0,1]
+    underexposedRatio: number;  // 亮度<5  像素占比 [0,1]
+    histogram: number[];        // 256 bin 亮度直方图
+  };
+  /** RMS 对比度 */
+  rmsContrast: number;
+  /** 综合质量评分 [0,100] */
+  qualityScore: number;
+}
+
+/** 导入历史记录 */
+export interface ImportedFileRecord {
+  id: string;
+  importedAt: number;           // 时间戳 ms
+  fileName: string;
+  fileSize: number;             // bytes
+  fileType: ImportedFileType;
+  /** 解析结果尺寸 */
+  width: number;
+  height: number;
+  channels: number;
+  /** 图像 dataURI (data:image/png;base64,...) */
+  dataUri: string;
+  /** 分析结果（可能异步填入）*/
+  analysis?: ImageAnalysisResult;
+  /** RGB 文件的用户参数 */
+  rgbParams?: RgbFileParams;
+}
+
+/** 当前选中查看的通道（null=合成图）*/
+export type ChannelView = null | 0 | 1 | 2;
+
+export const MAX_FILE_HISTORY = 20;
+
 // 蓝牙全局状态
 export interface BleState {
   isScanning: boolean;

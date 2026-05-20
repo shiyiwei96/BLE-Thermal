@@ -1,920 +1,4 @@
-'medium', content='运行 lint 检查并修复所有问题', details='', group=None, agent_name=None)], updated_at='2026-05-17T04:14:54.879785+00:00'), system_reminder='', observation=<ObservationType.TODO: 'todo'>)
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/app.json]
-Thought: **Step 1: Update app.json with USB permissions**
-Command: str_replace
-Old String: ```
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#121212"
-      },
-      "predictiveBackGestureEnabled": false,
-      "versionCode": 1,
-      "package": "com.miaoda.appbobi1rqlk4ch",
-      "permissions": [
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.ACCESS_FINE_LOCATION"
-      ]
-    },
-```
-New String: ```
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#121212"
-      },
-      "predictiveBackGestureEnabled": false,
-      "versionCode": 1,
-      "package": "com.miaoda.appbobi1rqlk4ch",
-      "permissions": [
-        "android.permission.BLUETOOTH",
-        "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.hardware.usb.host"
-      ]
-    },
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/app.json has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/types.ts]
-Thought: **Step 2: Extend types.ts with serial types**
-Command: str_replace
-Old String: ```
-// 蓝牙设备信息
-export interface BleDevice {
-```
-New String: ```
-// ============ 通道类型 ============
-export type ConnectionChannel = 'BLE' | 'SERIAL';
-
-// ============ 串口设备信息 ============
-export interface SerialDevice {
-  deviceId: number;
-  vendorId: number;
-  productId: number;
-  /** 用于展示的名称（vendorId:productId 格式，无法获取字符串名） */
-  displayName: string;
-  isConnected: boolean;
-}
-
-// 串口奇偶校验
-export type SerialParity = 0 | 1 | 2 | 3 | 4; // None=0 Odd=1 Even=2 Mark=3 Space=4
-
-// 串口配置
-export interface SerialConfig {
-  baudRate: number;    // 波特率，默认 9600
-  dataBits: number;   // 数据位 5/6/7/8，默认 8
-  stopBits: number;   // 停止位 1/2，默认 1
-  parity: SerialParity; // 校验位，默认 0（None）
-}
-
-// 常用波特率列表
-export const BAUD_RATES = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-
-// 默认串口配置（8N1）
-export const DEFAULT_SERIAL_CONFIG: SerialConfig = {
-  baudRate: 9600,
-  dataBits: 8,
-  stopBits: 1,
-  parity: 0,
-};
-
-// 校验位显示名称
-export const PARITY_LABELS: Record<SerialParity, string> = {
-  0: '无 (None)',
-  1: '奇 (Odd)',
-  2: '偶 (Even)',
-  3: '标记 (Mark)',
-  4: '空格 (Space)',
-};
-
-// 蓝牙设备信息
-export interface BleDevice {
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/lib/types.ts has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/types.ts]
-Thought: Now add `serialConfig` to AppSettings and update AlertType to include serial-specific types:
-Command: str_replace
-Old String: ```
-// 预警类型
-export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD';
-```
-New String: ```
-// 预警类型
-export type AlertType = 'RSSI_WEAK' | 'DATA_TIMEOUT' | 'CONNECTION_LOST' | 'DATA_THRESHOLD' | 'SERIAL_DISCONNECTED';
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/lib/types.ts has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/types.ts]
-Thought: 
-Command: str_replace
-Old String: ```
-// 预警记录条目
-export interface AlertEntry {
-  id: string;
-  timestamp: number;
-  type: AlertType;
-  deviceId: string;
-  deviceName: string | null;
-  detail: string;
-}
-```
-New String: ```
-// 预警记录条目
-export interface AlertEntry {
-  id: string;
-  timestamp: number;
-  type: AlertType;
-  deviceId: string;
-  deviceName: string | null;
-  detail: string;
-  channel?: ConnectionChannel; // 来源通道（BLE / SERIAL）
-}
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/lib/types.ts has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/types.ts]
-Thought: 
-Command: str_replace
-Old String: ```
-// 数据日志条目
-export interface DataLogEntry {
-  id: string;
-  timestamp: number;
-  direction: DataDirection;
-  rawData: number[]; // 字节数组
-  deviceId: string;
-  // 解析出的分组字段（仅 RX 方向）
-  parsedFields?: Record<string, number>;
-}
-```
-New String: ```
-// 数据日志条目
-export interface DataLogEntry {
-  id: string;
-  timestamp: number;
-  direction: DataDirection;
-  rawData: number[]; // 字节数组
-  deviceId: string;
-  channel?: ConnectionChannel; // 来源通道
-  // 解析出的分组字段（仅 RX 方向）
-  parsedFields?: Record<string, number>;
-}
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/lib/types.ts has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/types.ts]
-Thought: 
-Command: str_replace
-Old String: ```
-// 应用设置
-export interface AppSettings {
-  rssiThreshold: number;       // RSSI低于此值触发预警，默认-80
-  dataTimeoutSeconds: number;  // 数据超时秒数，默认10
-  defaultFormat: 'HEX' | 'ASCII'; // 默认数据显示格式
-  saveLog: boolean;            // 是否保存日志
-  dataAlertRules: DataAlertRule[];   // 数据内容报警规则列表
-  fieldMappings: FieldMapping[];     // 字段映射配置
-  bleUuid: BleUuidConfig;            // BLE UUID 配置
-}
-```
-New String: ```
-// 应用设置
-export interface AppSettings {
-  rssiThreshold: number;       // RSSI低于此值触发预警，默认-80
-  dataTimeoutSeconds: number;  // 数据超时秒数，默认10
-  defaultFormat: 'HEX' | 'ASCII'; // 默认数据显示格式
-  saveLog: boolean;            // 是否保存日志
-  dataAlertRules: DataAlertRule[];   // 数据内容报警规则列表
-  fieldMappings: FieldMapping[];     // 字段映射配置
-  bleUuid: BleUuidConfig;            // BLE UUID 配置
-  serialConfig: SerialConfig;        // 串口通信配置
-}
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/lib/types.ts has been edited.
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/serialService.ts]
-Thought: **Step 3: Create serialService.ts**
-Command: create
-Created File with Text:
-```
-/**
- * USB 串口服务层
- * 封装 react-native-usb-serialport-for-android 的操作工具函数
- * 仅支持 Android（iOS 不支持 USB Host）
- */
-import { Platform } from 'react-native';
-import type { Device as RNSerialDevice } from 'react-native-usb-serialport-for-android';
-import type { SerialDevice, SerialConfig, AppSettings, AlertEntry, DataLogEntry } from './types';
-import { DEFAULT_SERIAL_CONFIG } from './types';
-import { genId, parseBytesAsGrouped, createLogEntry as bleCreateLogEntry } from './bleService';
-
-// ============ 平台检查 ============
-export const isSerialSupported = Platform.OS === 'android';
-
-// ============ 设备适配 ============
-export function adaptSerialDevice(dev: RNSerialDevice, connected = false): SerialDevice {
-  return {
-    deviceId: dev.deviceId,
-    vendorId: dev.vendorId,
-    productId: dev.productId,
-    displayName: `USB设备 ${dev.vendorId.toString(16).toUpperCase().padStart(4, '0')}:${dev.productId.toString(16).toUpperCase().padStart(4, '0')}`,
-    isConnected: connected,
-  };
-}
-
-// ============ 十六进制工具 ============
-/** 将字节数组转为十六进制字符串（用于发送） */
-export function bytesToHexStr(bytes: number[]): string {
-  return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
-}
-
-/** 将十六进制字符串解析为字节数组 */
-export function hexStrToBytes(hexStr: string): number[] {
-  const clean = hexStr.replace(/\s/g, '');
-  if (clean.length % 2 !== 0) return [];
-  const bytes: number[] = [];
-  for (let i = 0; i < clean.length; i += 2) {
-    const byte = parseInt(clean.slice(i, i + 2), 16);
-    if (!isNaN(byte)) bytes.push(byte);
-  }
-  return bytes;
-}
-
-/** 将十六进制字符串（收到的数据）转为字节数组 */
-export function hexDataToBytes(hexStr: string): number[] {
-  return hexStrToBytes(hexStr);
-}
-
-// ============ 串口输入解析 ============
-/** 将用户输入（十六进制或ASCII）转为字节数组 */
-export function parseInputToBytes(input: string): number[] {
-  const trimmed = input.trim();
-  const hexPattern = /^[0-9A-Fa-f\s]+$/;
-  if (hexPattern.test(trimmed) && trimmed.replace(/\s/g, '').length % 2 === 0) {
-    return trimmed.split(/\s+/).flatMap(h => {
-      const b = parseInt(h, 16);
-      return isNaN(b) ? [] : [b];
-    });
-  }
-  // ASCII 模式
-  return Array.from(trimmed).map(c => c.charCodeAt(0));
-}
-
-// ============ 创建串口数据日志条目 ============
-export function createSerialLogEntry(
-  direction: 'RX' | 'TX',
-  rawData: number[],
-  deviceId: string
-): DataLogEntry {
-  const entry: DataLogEntry = {
-    id: genId(),
-    timestamp: Date.now(),
-    direction,
-    rawData,
-    deviceId,
-    channel: 'SERIAL',
-  };
-  if (direction === 'RX') {
-    const parsed = parseBytesAsGrouped(rawData);
-    if (Object.keys(parsed).length > 0) entry.parsedFields = parsed;
-  }
-  return entry;
-}
-
-// ============ 创建串口预警记录 ============
-export function createSerialAlert(
-  type: 'DATA_TIMEOUT' | 'SERIAL_DISCONNECTED' | 'DATA_THRESHOLD',
-  deviceId: string,
-  deviceName: string | null,
-  settings: AppSettings,
-  extra?: string
-): AlertEntry {
-  let detail = '';
-  const name = deviceName ?? deviceId;
-  switch (type) {
-    case 'SERIAL_DISCONNECTED':
-      detail = `串口设备 ${name} 已断开连接`;
-      break;
-    case 'DATA_TIMEOUT':
-      detail = `串口设备 ${name} 超过 ${settings.dataTimeoutSeconds} 秒未收到数据`;
-      break;
-    case 'DATA_THRESHOLD':
-      detail = `串口设备 ${name} 数据字段报警：${extra ?? ''}`;
-      break;
-  }
-  return {
-    id: genId(),
-    timestamp: Date.now(),
-    type,
-    deviceId,
-    deviceName,
-    detail,
-    channel: 'SERIAL',
-  };
-}
-
-// ============ 默认串口配置 ============
-export { DEFAULT_SERIAL_CONFIG };
-
-```
-
-</action>
-<observation>
-File created successfully at: /workspace/app-bobi1rqlk4ch/src/lib/serialService.ts
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/serialContext.tsx]
-Thought: **Step 4: Create serialContext.tsx**
-Command: create
-Created File with Text:
-```
-/**
- * USB 串口全局状态管理 Context
- * 使用 react-native-usb-serialport-for-android 实现
- * 仅支持 Android - iOS 显示不支持提示
- */
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
-import { Platform } from 'react-native';
-import type {
-  AlertEntry,
-  AppSettings,
-  DataLogEntry,
-  DataStats,
-  FieldHistoryPoint,
-  ParsedFieldState,
-  SerialConfig,
-  SerialDevice,
-} from './types';
-import { DEFAULT_SERIAL_CONFIG } from './types';
-import {
-  adaptSerialDevice,
-  bytesToHexStr,
-  createSerialAlert,
-  createSerialLogEntry,
-  hexDataToBytes,
-  isSerialSupported,
-  parseInputToBytes,
-} from './serialService';
-import {
-  DEFAULT_ALERT_RULES,
-  DEFAULT_FIELD_MAPPINGS,
-  evaluateThreshold,
-  genId,
-} from './bleService';
-
-const MAX_LOG_ENTRIES = 1000;
-const MAX_RSSI_HISTORY = 60;
-const MAX_FIELD_HISTORY = 60;
-
-const DEFAULT_STATS: DataStats = {
-  totalRxBytes: 0,
-  totalTxBytes: 0,
-  rxRate: 0,
-  txRate: 0,
-  rssiHistory: [],
-};
-
-// ============ Context 类型 ============
-export interface SerialContextType {
-  // 串口设备列表
-  serialDevices: SerialDevice[];
-  connectedSerial: SerialDevice | null;
-
-  // 状态标志
-  isDiscovering: boolean;    // 正在枚举 USB 设备
-  isConnecting: boolean;     // 正在连接
-  serialError: string | null;
-
-  // 数据
-  serialLogs: DataLogEntry[];
-  serialAlerts: AlertEntry[];
-  serialStats: DataStats;
-  serialParsedFields: Record<string, ParsedFieldState>;
-
-  // 操作
-  discoverDevices: () => Promise<void>;
-  connectSerial: (device: SerialDevice, config: SerialConfig) => Promise<void>;
-  disconnectSerial: () => Promise<void>;
-  sendSerialData: (input: string) => Promise<void>;
-  clearSerialLogs: () => void;
-  clearSerialAlerts: () => void;
-  updateSerialAlertRule: (id: string, patch: Partial<import('./types').DataAlertRule>) => void;
-  deleteSerialAlertRule: (id: string) => void;
-  addSerialAlertRule: (rule: Omit<import('./types').DataAlertRule, 'id'>) => void;
-}
-
-const SerialContext = createContext<SerialContextType | null>(null);
-
-export function useSerial(): SerialContextType {
-  const ctx = useContext(SerialContext);
-  if (!ctx) throw new Error('useSerial must be used within SerialProvider');
-  return ctx;
-}
-
-// ============ Provider ============
-export function SerialProvider({ children, settings }: { children: React.ReactNode; settings: AppSettings }) {
-  const [serialDevices, setSerialDevices] = useState<SerialDevice[]>([]);
-  const [connectedSerial, setConnectedSerial] = useState<SerialDevice | null>(null);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [serialError, setSerialError] = useState<string | null>(null);
-  const [serialLogs, setSerialLogs] = useState<DataLogEntry[]>([]);
-  const [serialAlerts, setSerialAlerts] = useState<AlertEntry[]>([]);
-  const [serialStats, setSerialStats] = useState<DataStats>(DEFAULT_STATS);
-  const [serialParsedFields, setSerialParsedFields] = useState<Record<string, ParsedFieldState>>({});
-  const [alertRules, setAlertRules] = useState(settings.dataAlertRules ?? DEFAULT_ALERT_RULES);
-
-  // refs
-  const usbSerialRef = useRef<import('react-native-usb-serialport-for-android').UsbSerial | null>(null);
-  const rxListenerRef = useRef<{ remove: () => void } | null>(null);
-  const connectedDeviceRef = useRef<SerialDevice | null>(null);
-  const settingsRef = useRef(settings);
-  const rxBytesBuffer = useRef(0);
-  const txBytesBuffer = useRef(0);
-  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const dataTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const ruleLastAlertRef = useRef<Record<string, number>>({});
-
-  // 同步 settings 到 ref
-  useEffect(() => { settingsRef.current = settings; }, [settings]);
-  useEffect(() => { setAlertRules(settings.dataAlertRules ?? DEFAULT_ALERT_RULES); }, [settings.dataAlertRules]);
-
-  // ============ 停止所有任务 ============
-  const stopAllTasks = useCallback(() => {
-    if (statsTimerRef.current) { clearInterval(statsTimerRef.current); statsTimerRef.current = null; }
-    if (dataTimeoutRef.current) { clearTimeout(dataTimeoutRef.current); dataTimeoutRef.current = null; }
-    rxListenerRef.current?.remove();
-    rxListenerRef.current = null;
-  }, []);
-
-  // ============ 重置数据超时计时器 ============
-  const resetDataTimeout = useCallback(() => {
-    if (dataTimeoutRef.current) clearTimeout(dataTimeoutRef.current);
-    const s = settingsRef.current.dataTimeoutSeconds * 1000;
-    dataTimeoutRef.current = setTimeout(() => {
-      const dev = connectedDeviceRef.current;
-      if (!dev) return;
-      const alert = createSerialAlert('DATA_TIMEOUT', dev.deviceId.toString(), dev.displayName, settingsRef.current);
-      setSerialAlerts(a => [alert, ...a].slice(0, 200));
-    }, s);
-  }, []);
-
-  // ============ 处理解析字段 + 触发报警 ============
-  const handleParsedFields = useCallback((fields: Record<string, number>) => {
-    if (Object.keys(fields).length === 0) return;
-    const now = Date.now();
-    const currentRules = alertRules;
-
-    setSerialParsedFields(prev => {
-      const next = { ...prev };
-      for (const [key, value] of Object.entries(fields)) {
-        const existing = next[key];
-        const newHistory: FieldHistoryPoint[] = [
-          ...(existing?.history ?? []),
-          { timestamp: now, value },
-        ].slice(-MAX_FIELD_HISTORY);
-        next[key] = { key, value, timestamp: now, history: newHistory };
-      }
-      return next;
-    });
-
-    // 检查报警规则
-    for (const rule of currentRules) {
-      if (!rule.enabled) continue;
-      const val = fields[rule.fieldKey];
-      if (val === undefined) continue;
-      if (!evaluateThreshold(val, rule.operator, rule.value)) continue;
-      const cooldownKey = rule.id;
-      if (now - (ruleLastAlertRef.current[cooldownKey] ?? 0) < 30000) continue;
-      ruleLastAlertRef.current[cooldownKey] = now;
-      const dev = connectedDeviceRef.current;
-      const extra = `${rule.fieldKey} ${rule.operator} ${rule.value}，当前值=${val}`;
-      const alert = createSerialAlert('DATA_THRESHOLD', dev?.deviceId.toString() ?? '', dev?.displayName ?? null, settingsRef.current, extra);
-      setSerialAlerts(a => [alert, ...a].slice(0, 200));
-    }
-  }, [alertRules]);
-
-  // ============ 枚举 USB 设备 ============
-  const discoverDevices = useCallback(async () => {
-    if (!isSerialSupported) {
-      setSerialError('iOS 不支持 USB 串口通信，请使用 Android 设备');
-      return;
-    }
-    setIsDiscovering(true);
-    setSerialError(null);
-    try {
-      const { UsbSerialManager } = await import('react-native-usb-serialport-for-android');
-      const devices = await UsbSerialManager.list();
-      setSerialDevices(devices.map(d => adaptSerialDevice(d, false)));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '获取设备列表失败';
-      setSerialError(`枚举设备失败：${msg}`);
-    } finally {
-      setIsDiscovering(false);
-    }
-  }, []);
-
-  // ============ 连接串口设备 ============
-  const connectSerial = useCallback(async (device: SerialDevice, config: SerialConfig) => {
-    if (!isSerialSupported) {
-      setSerialError('iOS 不支持 USB 串口通信');
-      return;
-    }
-    setIsConnecting(true);
-    setSerialError(null);
-
-    try {
-      const { UsbSerialManager, Parity } = await import('react-native-usb-serialport-for-android');
-
-      // 请求 USB 权限
-      const hasPermission = await UsbSerialManager.tryRequestPermission(device.deviceId);
-      if (!hasPermission) {
-        // Permission dialog shown; user needs to re-tap "连接" after granting
-        setSerialError('请在弹出的对话框中授予 USB 权限后重试');
-        setIsConnecting(false);
-        return;
-      }
-
-      // 打开串口
-      const serial = await UsbSerialManager.open(device.deviceId, {
-        baudRate: config.baudRate,
-        dataBits: config.dataBits,
-        stopBits: config.stopBits,
-        parity: config.parity as Parity,
-      });
-      usbSerialRef.current = serial;
-
-      const connectedDev: SerialDevice = { ...device, isConnected: true };
-      connectedDeviceRef.current = connectedDev;
-      setConnectedSerial(connectedDev);
-      setSerialDevices(prev => prev.map(d => d.deviceId === device.deviceId ? connectedDev : d));
-      setSerialStats(DEFAULT_STATS);
-      setSerialParsedFields({});
-      ruleLastAlertRef.current = {};
-
-      // 订阅数据接收
-      rxListenerRef.current = serial.onReceived(event => {
-        const bytes = hexDataToBytes(event.data);
-        if (bytes.length === 0) return;
-        const entry = createSerialLogEntry('RX', bytes, device.deviceId.toString());
-        setSerialLogs(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES));
-        rxBytesBuffer.current += bytes.length;
-        if (entry.parsedFields && Object.keys(entry.parsedFields).length > 0) {
-          handleParsedFields(entry.parsedFields);
-        }
-        resetDataTimeout();
-      });
-
-      // 速率统计（每1秒）
-      statsTimerRef.current = setInterval(() => {
-        const rx = rxBytesBuffer.current;
-        const tx = txBytesBuffer.current;
-        rxBytesBuffer.current = 0;
-        txBytesBuffer.current = 0;
-        setSerialStats(prev => ({
-          ...prev,
-          rxRate: rx,
-          txRate: tx,
-          totalRxBytes: prev.totalRxBytes + rx,
-          totalTxBytes: prev.totalTxBytes + tx,
-        }));
-      }, 1000);
-
-      resetDataTimeout();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '连接失败';
-      setSerialError(`串口连接失败：${msg}`);
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [handleParsedFields, resetDataTimeout]);
-
-  // ============ 断开串口 ============
-  const disconnectSerial = useCallback(async () => {
-    stopAllTasks();
-    const dev = connectedDeviceRef.current;
-    if (usbSerialRef.current) {
-      try {
-        await usbSerialRef.current.close();
-      } catch { /* 忽略关闭错误 */ }
-      usbSerialRef.current = null;
-    }
-    if (dev) {
-      const alert = createSerialAlert('SERIAL_DISCONNECTED', dev.deviceId.toString(), dev.displayName, settingsRef.current);
-      setSerialAlerts(a => [alert, ...a].slice(0, 200));
-    }
-    connectedDeviceRef.current = null;
-    setConnectedSerial(null);
-    setSerialDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
-    setSerialStats(DEFAULT_STATS);
-  }, [stopAllTasks]);
-
-  // ============ 发送数据 ============
-  const sendSerialData = useCallback(async (input: string) => {
-    const serial = usbSerialRef.current;
-    const dev = connectedDeviceRef.current;
-    if (!serial || !dev) return;
-    const bytes = parseInputToBytes(input);
-    if (bytes.length === 0) return;
-    const hexStr = bytesToHexStr(bytes);
-    try {
-      await serial.send(hexStr);
-      const entry = createSerialLogEntry('TX', bytes, dev.deviceId.toString());
-      setSerialLogs(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES));
-      txBytesBuffer.current += bytes.length;
-      setSerialStats(prev => ({ ...prev, totalTxBytes: prev.totalTxBytes + bytes.length }));
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '发送失败';
-      setSerialError(`串口发送失败：${msg}`);
-    }
-  }, []);
-
-  // ============ 清空操作 ============
-  const clearSerialLogs = useCallback(() => setSerialLogs([]), []);
-  const clearSerialAlerts = useCallback(() => setSerialAlerts([]), []);
-
-  // ============ 报警规则 CRUD ============
-  const addSerialAlertRule = useCallback((rule: Omit<import('./types').DataAlertRule, 'id'>) => {
-    setAlertRules(prev => [...prev, { ...rule, id: `serial-rule-${genId()}` }]);
-  }, []);
-  const updateSerialAlertRule = useCallback((id: string, patch: Partial<import('./types').DataAlertRule>) => {
-    setAlertRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
-  }, []);
-  const deleteSerialAlertRule = useCallback((id: string) => {
-    setAlertRules(prev => prev.filter(r => r.id !== id));
-  }, []);
-
-  // ============ 卸载清理 ============
-  useEffect(() => {
-    return () => {
-      stopAllTasks();
-      usbSerialRef.current?.close().catch(() => {});
-    };
-  }, [stopAllTasks]);
-
-  const value: SerialContextType = {
-    serialDevices,
-    connectedSerial,
-    isDiscovering,
-    isConnecting,
-    serialError,
-    serialLogs,
-    serialAlerts,
-    serialStats,
-    serialParsedFields,
-    discoverDevices,
-    connectSerial,
-    disconnectSerial,
-    sendSerialData,
-    clearSerialLogs,
-    clearSerialAlerts,
-    updateSerialAlertRule,
-    deleteSerialAlertRule,
-    addSerialAlertRule,
-  };
-
-  return <SerialContext.Provider value={value}>{children}</SerialContext.Provider>;
-}
-
-```
-
-</action>
-<observation>
-File created successfully at: /workspace/app-bobi1rqlk4ch/src/lib/serialContext.tsx
-
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/lib/connectionMode.ts]
-Thought: **Step 5: Create connectionMode.ts (global BLE/Serial mode switcher)**
-Command: create
-Created File with Text:
-```
-/**
- * 全局通道模式 Context
- * 控制当前激活的通信通道：BLE 蓝牙 或 SERIAL 串口
- */
-import React, { createContext, useCallback, useContext, useState } from 'react';
-import type { ConnectionChannel } from './types';
-
-interface ConnectionModeContextType {
-  activeChannel: ConnectionChannel;
-  setActiveChannel: (ch: ConnectionChannel) => void;
-}
-
-const ConnectionModeContext = createContext<ConnectionModeContextType>({
-  activeChannel: 'BLE',
-  setActiveChannel: () => {},
-});
-
-export function ConnectionModeProvider({ children }: { children: React.ReactNode }) {
-  const [activeChannel, setChannelState] = useState<ConnectionChannel>('BLE');
-
-  const setActiveChannel = useCallback((ch: ConnectionChannel) => {
-    setChannelState(ch);
-  }, []);
-
-  return (
-    <ConnectionModeContext.Provider value={{ activeChannel, setActiveChannel }}>
-      {children}
-    </ConnectionModeContext.Provider>
-  );
-}
-
-export function useConnectionMode() {
-  return useContext(ConnectionModeContext);
-}
-
-```
-
-</action>
-<observation>
-File created successfully at: /workspace/app-bobi1rqlk4ch/src/lib/connectionMode.ts
-
-</observation>
-<action>
-**CmdRunAction (source=EventSource.AGENT, is_input=False)**
-COMMAND:
-mv /workspace/app-bobi1rqlk4ch/src/lib/connectionMode.ts /workspace/app-bobi1rqlk4ch/src/lib/connectionMode.tsx
-</action>
-<observation>
-**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
-  "exit_code": 0,
-  "pid": -1,
-  "username": null,
-  "hostname": null,
-  "working_dir": "/workspace/app-bobi1rqlk4ch",
-  "py_interpreter_path": null,
-  "prefix": "",
-  "suffix": "\n[The command completed with exit code 0.]"
-})**
---BEGIN AGENT OBSERVATION--
-
-[The command completed with exit code 0.]
-[Current working directory: /workspace/app-bobi1rqlk4ch]
---END AGENT OBSERVATION--
-</observation>
-<action>
-**FileEditAction**
-Path: [/workspace/app-bobi1rqlk4ch/src/app/_layout.tsx]
-Thought: **Step 6: Update _layout.tsx to mount SerialProvider and ConnectionModeProvider**
-Command: str_replace
-Old String: ```
-import * as Sentry from '@sentry/react-native';
-import { Stack } from 'expo-router';
-import { PortalHost } from '@rn-primitives/portal';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { StatusBar } from 'expo-status-bar';
-
-import { BleProvider } from '@/lib/bleContext';
-import "../global.css";
-
-Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
-});
-
-function RootLayoutNav() {
-  return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="(app)" />
-    </Stack>
-  );
-}
-
-const RootLayout: React.FC = () => {
-  return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
-      <StatusBar style="light" backgroundColor="#121212" />
-      <BleProvider>
-        <RootLayoutNav />
-        <PortalHost />
-      </BleProvider>
-    </GestureHandlerRootView>
-  );
-};
-
-export default Sentry.wrap(RootLayout);
-```
-New String: ```
-import * as Sentry from '@sentry/react-native';
-import { Stack } from 'expo-router';
-import { PortalHost } from '@rn-primitives/portal';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { StatusBar } from 'expo-status-bar';
-
-import { BleProvider, useBle } from '@/lib/bleContext';
-import { SerialProvider } from '@/lib/serialContext';
-import { ConnectionModeProvider } from '@/lib/connectionMode';
-import "../global.css";
-
-Sentry.init({
-  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
-});
-
-function RootLayoutNav() {
-  return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="(app)" />
-    </Stack>
-  );
-}
-
-/** SerialProvider 需要 settings，从 BleProvider 内读取 */
-function InnerProviders({ children }: { children: React.ReactNode }) {
-  const { settings } = useBle();
-  return (
-    <SerialProvider settings={settings}>
-      <ConnectionModeProvider>
-        {children}
-      </ConnectionModeProvider>
-    </SerialProvider>
-  );
-}
-
-const RootLayout: React.FC = () => {
-  return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#121212' }}>
-      <StatusBar style="light" backgroundColor="#121212" />
-      <BleProvider>
-        <InnerProviders>
-          <RootLayoutNav />
-          <PortalHost />
-        </InnerProviders>
-      </BleProvider>
-    </GestureHandlerRootView>
-  );
-};
-
-export default Sentry.wrap(RootLayout);
-```
-
-</action>
-<observation>
-The file /workspace/app-bobi1rqlk4ch/src/app/_layout.tsx has been edited.
-
-</observation>
-<action>
-TodoAction(todos=[TodoItem(id='1', status='completed', priority='high', content='安装 react-native-usb-serialport-for-android 依赖', details='', group=None, agent_name=None), TodoItem(id='2', status='completed', priority='high', content='更新 app.json 添加 USB 权限配置', details='', group=None, agent_name=None), TodoItem(id='3', status='completed', priority='high', content='扩展 types.ts：新增串口类型、SerialDevice、SerialConfig', details='', group=None, agent_name=None), TodoItem(id='4', status='completed', priority='high', content='创建 serialService.ts：USB串口工具函数层', details='', group=None, agent_name=None), TodoItem(id='5', status='completed', priority='high', content='创建 serialContext.tsx：串口状态管理 Context', details='', group=None, agent_name=None), TodoItem(id='6', status='completed', priority='medium', content='创建 connectionMode.tsx：全局 BLE/串口模式切换', details='', group=None, agent_name=None), TodoItem(id='7', status='completed', priority='medium', content='更新 _layout.tsx：挂载 SerialProvider', details='', group=None, agent_name=None), TodoItem(id='8', status='in_progress', priority='high', content='更新 scan.tsx：添加 BLE/串口模式切换 + 串口设备列表', details='', group=None, agent_name=None), TodoItem(id='9', status='pending', priority='high', content='更新 monitor.tsx：支持 BLE 和串口双数据源', details='', group=None, agent_name=None), TodoItem(id='10', status='pending', priority='medium', content='更新 alerts.tsx：合并展示 BLE + 串口预警', details='', group=None, agent_name=None), TodoItem(id='11', status='pending', priority='medium', content='更新 stats.tsx：支持双数据源统计', details='', group=None, agent_name=None), TodoItem(id='12', status='pending', priority='medium', content='更新 settings.tsx：新增串口配置区（波特率/数据位/停止位/校验位）', details='', group=None, agent_name=None), TodoItem(id='13', status='pending', priority='medium', content='运行 lint 检查并修复所有问题', details='', group=None, agent_name=None)], command='update', thought='', action=<ActionType.TODO: 'todo'>, content='')
-</action>
-<observation>
-TodoObservation(content='<system-reminder>\nYour todo list has changed. Here are the latest contents of your todo list:\n\n1. 安装 react-native-usb-serialport-for-android 依赖 *high* [completed]\n\n2. 更新 app.json 添加 USB 权限配置 *high* [completed]\n\n3. 扩展 types.ts：新增串口类型、SerialDevice、SerialConfig *high* [completed]\n\n4. 创建 serialService.ts：USB串口工具函数层 *high* [completed]\n\n5. 创建 serialContext.tsx：串口状态管理 Context *high* [completed]\n\n6. 创建 connectionMode.tsx：全局 BLE/串口模式切换 *medium* [completed]\n\n7. 更新 _layout.tsx：挂载 SerialProvider *medium* [completed]\n\n8. 更新 scan.tsx：添加 BLE/串口模式切换 + 串口设备列表 *high* [in_progress]\n\n9. 更新 monitor.tsx：支持 BLE 和串口双数据源 *high* [pending]\n\n10. 更新 alerts.tsx：合并展示 BLE + 串口预警 *medium* [pending]\n\n11. 更新 stats.tsx：支持双数据源统计 *medium* [pending]\n\n12. 更新 settings.tsx：新增串口配置区（波特率/数据位/停止位/校验位） *medium* [pending]\n\n13. 运行 lint 检查并修复所有问题 *medium* [pending]\n</system-reminder>', state=TodoState(items=[TodoItem(id='1', status='completed', priority='high', content='安装 react-native-usb-serialport-for-android 依赖', details='', group=None, agent_name=None), TodoItem(id='2', status='completed', priority='high', content='更新 app.json 添加 USB 权限配置', details='', group=None, agent_name=None), TodoItem(id='3', status='completed', priority='high', content='扩展 types.ts：新增串口类型、SerialDevice、SerialConfig', details='', group=None, agent_name=None), TodoItem(id='4', status='completed', priority='high', content='创建 serialService.ts：USB串口工具函数层', details='', group=None, agent_name=None), TodoItem(id='5', status='completed', priority='high', content='创建 serialContext.tsx：串口状态管理 Context', details='', group=None, agent_name=None), TodoItem(id='6', status='completed', priority='medium', content='创建 connectionMode.tsx：全局 BLE/串口模式切换', details='', group=None, agent_name=None), TodoItem(id='7', status='completed', priority='medium', content='更新 _layout.tsx：挂载 SerialProvider', details='', group=None, agent_name=None), TodoItem(id='8', status='in_progress', priority='high', content='更新 scan.tsx：添加 BLE/串口模式切换 + 串口设备列表', details='', group=None, agent_name=None), TodoItem(id='9', status='pending', priority='high', content='更新 monitor.tsx：支持 BLE 和串口双数据源', details='', group=None, agent_name=None), TodoItem(id='10', status='pending', priority='medium', content='更新 alerts.tsx：合并展示 BLE + 串口预警', details='', group=None, agent_name=None), TodoItem(id='11', status='pending', priority='medium', content='更新 stats.tsx：支持双数据源统计', details='', group=None, agent_name=None), TodoItem(id='12', status='pending', priority='medium', content='更新 settings.tsx：新增串口配置区（波特率/数据位/停止位/校验位）', details='', group=None, agent_name=None), TodoItem(id='13', status='pending', priority='medium', content='运行 lint 检查并修复所有问题', details='', group=None, agent_name=None)], updated_at='2026-05-17T04:17:01.818200+00:00'), system_reminder='', observation=<ObservationType.TODO: 'todo'>)
+t.tsx：串口状态管理 Context *high* [completed]\n\n6. 创建 connectionMode.tsx：全局 BLE/串口模式切换 *medium* [completed]\n\n7. 更新 _layout.tsx：挂载 SerialProvider *medium* [completed]\n\n8. 更新 scan.tsx：添加 BLE/串口模式切换 + 串口设备列表 *high* [in_progress]\n\n9. 更新 monitor.tsx：支持 BLE 和串口双数据源 *high* [pending]\n\n10. 更新 alerts.tsx：合并展示 BLE + 串口预警 *medium* [pending]\n\n11. 更新 stats.tsx：支持双数据源统计 *medium* [pending]\n\n12. 更新 settings.tsx：新增串口配置区（波特率/数据位/停止位/校验位） *medium* [pending]\n\n13. 运行 lint 检查并修复所有问题 *medium* [pending]\n</system-reminder>', state=TodoState(items=[TodoItem(id='1', status='completed', priority='high', content='安装 react-native-usb-serialport-for-android 依赖', details='', group=None, agent_name=None), TodoItem(id='2', status='completed', priority='high', content='更新 app.json 添加 USB 权限配置', details='', group=None, agent_name=None), TodoItem(id='3', status='completed', priority='high', content='扩展 types.ts：新增串口类型、SerialDevice、SerialConfig', details='', group=None, agent_name=None), TodoItem(id='4', status='completed', priority='high', content='创建 serialService.ts：USB串口工具函数层', details='', group=None, agent_name=None), TodoItem(id='5', status='completed', priority='high', content='创建 serialContext.tsx：串口状态管理 Context', details='', group=None, agent_name=None), TodoItem(id='6', status='completed', priority='medium', content='创建 connectionMode.tsx：全局 BLE/串口模式切换', details='', group=None, agent_name=None), TodoItem(id='7', status='completed', priority='medium', content='更新 _layout.tsx：挂载 SerialProvider', details='', group=None, agent_name=None), TodoItem(id='8', status='in_progress', priority='high', content='更新 scan.tsx：添加 BLE/串口模式切换 + 串口设备列表', details='', group=None, agent_name=None), TodoItem(id='9', status='pending', priority='high', content='更新 monitor.tsx：支持 BLE 和串口双数据源', details='', group=None, agent_name=None), TodoItem(id='10', status='pending', priority='medium', content='更新 alerts.tsx：合并展示 BLE + 串口预警', details='', group=None, agent_name=None), TodoItem(id='11', status='pending', priority='medium', content='更新 stats.tsx：支持双数据源统计', details='', group=None, agent_name=None), TodoItem(id='12', status='pending', priority='medium', content='更新 settings.tsx：新增串口配置区（波特率/数据位/停止位/校验位）', details='', group=None, agent_name=None), TodoItem(id='13', status='pending', priority='medium', content='运行 lint 检查并修复所有问题', details='', group=None, agent_name=None)], updated_at='2026-05-17T04:17:01.818200+00:00'), system_reminder='', observation=<ObservationType.TODO: 'todo'>)
 </observation>
 <action>
 **FileEditAction**
@@ -6838,3 +5922,775 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 COMMAND:
 cd /workspace/app-bobi1rqlk4ch && grep -n "notifySubscriptionRef\|rxCharUuid\|txCharUuid\|notifyChar\|onCharChange\|bleUuid\|connectDevice" src/lib/bleContext.tsx | head -25
 </action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+42:  bleUuid: DEFAULT_BLE_UUID,
+64:  connectDevice: (device: BleDevice) => Promise<void>;
+65:  disconnectDevice: () => Promise<void>;
+102:  const notifySubscriptionRef = useRef<Subscription | null>(null);
+231:    notifySubscriptionRef.current?.remove();
+232:    notifySubscriptionRef.current = null;
+297:  const connectDevice = useCallback(async (device: BleDevice) => {
+318:      const currentUuid = settingsRef.current.bleUuid;
+320:      const rxCharUuid = currentUuid.rxCharUuid;
+321:      const txCharUuid = currentUuid.txCharUuid;
+324:      notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
+326:        rxCharUuid,
+405:  const disconnectDevice = useCallback(async () => {
+436:    const { txCharUuid, serviceUuid } = settingsRef.current.bleUuid;
+439:      await bleManager.writeCharacteristicWithoutResponseForDevice(dev.id, serviceUuid, txCharUuid, b64);
+542:      connectDevice,
+543:      disconnectDevice,
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && sed -n '295,410p' src/lib/bleContext.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+
+  // ============ 连接设备 ============
+  const connectDevice = useCallback(async (device: BleDevice) => {
+    stopScan();
+    setBleError(null);
+
+    try {
+      // 连接设备
+      const connectedPlx = await bleManager.connectToDevice(device.id, {
+        autoConnect: false,
+        requestMTU: 512,
+      });
+
+      // 发现所有 Services 和 Characteristics
+      await connectedPlx.discoverAllServicesAndCharacteristics();
+
+      const adapted = adaptDevice(connectedPlx, true);
+      setConnectedDevice(adapted);
+      setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
+      setStats(DEFAULT_STATS);
+      setParsedFields({});
+      ruleLastAlertRef.current = {};
+
+      const currentUuid = settingsRef.current.bleUuid;
+      const serviceUuid = currentUuid.serviceUuid;
+      const rxCharUuid = currentUuid.rxCharUuid;
+      const txCharUuid = currentUuid.txCharUuid;
+
+      // 订阅 RX 通知特征值
+      notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
+        serviceUuid,
+        rxCharUuid,
+        (error, characteristic) => {
+          if (error) {
+            // 连接断开会触发此回调，不重复处理
+            return;
+          }
+          if (!characteristic?.value) return;
+
+          const bytes = base64ToBytes(characteristic.value);
+          const logEntry = createLogEntry('RX', bytes, device.id);
+          addLog(logEntry);
+          rxBytesBufferRef.current += bytes.length;
+
+          if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
+            handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
+          }
+
+          resetDataTimeout();
+        }
+      );
+
+      // 监听连接断开
+      disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
+        const dev = connectedDeviceRef.current;
+        const detail = error ? error.message : '连接意外断开';
+        const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
+        setAlerts(a => [alert, ...a].slice(0, 200));
+        setConnectedDevice(null);
+        setDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
+        setStats(DEFAULT_STATS);
+        stopAllTasks();
+      });
+
+      // RSSI 定时读取（每 2 秒）
+      rssiTimerRef.current = setInterval(async () => {
+        try {
+          const rssi = await connectedPlx.readRSSI();
+          const rssiVal = rssi.rssi ?? -100;
+          setConnectedDevice(prev => prev ? { ...prev, rssi: rssiVal } : prev);
+          appendRssiHistory(rssiVal);
+
+          // RSSI 预警
+          const now = Date.now();
+          if (
+            rssiVal < settingsRef.current.rssiThreshold &&
+            now - lastRssiAlertRef.current > 60000
+          ) {
+            lastRssiAlertRef.current = now;
+            const dev = connectedDeviceRef.current;
+            if (dev) addAlert(createAlertEntry('RSSI_WEAK', { ...dev, rssi: rssiVal }, settingsRef.current));
+          }
+        } catch { /* 读取 RSSI 失败忽略 */ }
+      }, 2000);
+
+      // 速率统计（每1秒）
+      statsTimerRef.current = setInterval(() => {
+        const rx = rxBytesBufferRef.current;
+        const tx = txBytesBufferRef.current;
+        rxBytesBufferRef.current = 0;
+        txBytesBufferRef.current = 0;
+        setStats(prev => ({
+          ...prev,
+          rxRate: rx,
+          txRate: tx,
+          totalRxBytes: prev.totalRxBytes + rx,
+          totalTxBytes: prev.totalTxBytes + tx,
+        }));
+      }, 1000);
+
+      // 初始数据超时定时器
+      resetDataTimeout();
+
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '连接失败';
+      setBleError(`连接失败：${msg}`);
+    }
+  }, [stopScan, addLog, addAlert, appendRssiHistory, handleParsedFields, resetDataTimeout, stopAllTasks]);
+
+  // ============ 断开设备 ============
+  const disconnectDevice = useCallback(async () => {
+    const dev = connectedDeviceRef.current;
+    if (dev) {
+      try {
+        await bleManager.cancelDeviceConnection(dev.id);
+      } catch { /* 忽略断开错误 */ }
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && sed -n '410,560p' src/lib/bleContext.tsx && wc -l src/lib/bleContext.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+      } catch { /* 忽略断开错误 */ }
+    }
+    stopAllTasks();
+    setConnectedDevice(null);
+    setDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
+    setStats(DEFAULT_STATS);
+  }, [stopAllTasks]);
+
+  // ============ 发送数据 ============
+  const sendData = useCallback(async (input: string) => {
+    const dev = connectedDeviceRef.current;
+    if (!dev) return;
+
+    let bytes: number[];
+    const hexPattern = /^[0-9A-Fa-f\s]+$/;
+    if (hexPattern.test(input.trim()) && input.trim().replace(/\s/g, '').length % 2 === 0) {
+      bytes = input.trim().split(/\s+/).flatMap(h => {
+        const b = parseInt(h, 16);
+        return isNaN(b) ? [] : [b];
+      });
+    } else {
+      bytes = Array.from(input).map(c => c.charCodeAt(0));
+    }
+    if (bytes.length === 0) return;
+
+    const b64 = bytesToBase64(bytes);
+    const { txCharUuid, serviceUuid } = settingsRef.current.bleUuid;
+
+    try {
+      await bleManager.writeCharacteristicWithoutResponseForDevice(dev.id, serviceUuid, txCharUuid, b64);
+      const entry = createLogEntry('TX', bytes, dev.id);
+      addLog(entry);
+      txBytesBufferRef.current += bytes.length;
+      setStats(prev => ({ ...prev, totalTxBytes: prev.totalTxBytes + bytes.length }));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '发送失败';
+      setBleError(`发送失败：${msg}`);
+    }
+  }, [addLog]);
+
+  // ============ 清空操作 ============
+  const clearLogs = useCallback(() => setDataLogs([]), []);
+  const clearAlerts = useCallback(() => setAlerts([]), []);
+
+  // ============ 更新设置 ============
+  const updateSettings = useCallback((partial: Partial<AppSettings>) => {
+    setSettings(prev => {
+      const next = { ...prev, ...partial };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  // ============ 报警规则管理 ============
+  const addAlertRule = useCallback((rule: Omit<DataAlertRule, 'id'>) => {
+    setSettings(prev => {
+      const next = { ...prev, dataAlertRules: [...prev.dataAlertRules, { ...rule, id: genId() }] };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  const updateAlertRule = useCallback((id: string, partial: Partial<DataAlertRule>) => {
+    setSettings(prev => {
+      const next = {
+        ...prev,
+        dataAlertRules: prev.dataAlertRules.map(r => r.id === id ? { ...r, ...partial } : r),
+      };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  const deleteAlertRule = useCallback((id: string) => {
+    setSettings(prev => {
+      const next = { ...prev, dataAlertRules: prev.dataAlertRules.filter(r => r.id !== id) };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  // ============ 字段映射管理 ============
+  const addFieldMapping = useCallback((mapping: FieldMapping) => {
+    setSettings(prev => {
+      if (prev.fieldMappings.some(m => m.fieldKey === mapping.fieldKey)) return prev;
+      const next = { ...prev, fieldMappings: [...prev.fieldMappings, mapping] };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  const updateFieldMapping = useCallback((fieldKey: string, partial: Partial<FieldMapping>) => {
+    setSettings(prev => {
+      const next = {
+        ...prev,
+        fieldMappings: prev.fieldMappings.map(m => m.fieldKey === fieldKey ? { ...m, ...partial } : m),
+      };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  const deleteFieldMapping = useCallback((fieldKey: string) => {
+    setSettings(prev => {
+      const next = { ...prev, fieldMappings: prev.fieldMappings.filter(m => m.fieldKey !== fieldKey) };
+      saveSettings(next);
+      return next;
+    });
+  }, [saveSettings]);
+
+  // ============ 清理 ============
+  useEffect(() => {
+    return () => {
+      stopAllTasks();
+      if (scanStopTimerRef.current) clearTimeout(scanStopTimerRef.current);
+    };
+  }, [stopAllTasks]);
+
+  return (
+    <BleContext.Provider value={{
+      bleReady,
+      bleError,
+      isScanning,
+      devices,
+      connectedDevice,
+      dataLogs,
+      alerts,
+      stats,
+      settings,
+      parsedFields,
+      startScan,
+      stopScan,
+      connectDevice,
+      disconnectDevice,
+      sendData,
+      clearLogs,
+      clearAlerts,
+      updateSettings,
+      addAlertRule,
+      updateAlertRule,
+      deleteAlertRule,
+      addFieldMapping,
+      updateFieldMapping,
+      deleteFieldMapping,
+    }}>
+      {children}
+    </BleContext.Provider>
+  );
+}
+
+export { BleContext };
+561 src/lib/bleContext.tsx
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && cat -n src/app/\(app\)/\(tabs\)/_layout.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+     1	import { Tabs } from 'expo-router';
+     2	import { Ionicons } from '@expo/vector-icons';
+     3	
+     4	// 深色主题颜色常量
+     5	const ACTIVE_COLOR = '#00E5FF';
+     6	const INACTIVE_COLOR = '#666666';
+     7	const TAB_BG = '#0F0F0F';
+     8	const BORDER_COLOR = '#333333';
+     9	
+    10	export default function TabsLayout() {
+    11	  return (
+    12	    <Tabs
+    13	      screenOptions={{
+    14	        headerShown: false,
+    15	        tabBarActiveTintColor: ACTIVE_COLOR,
+    16	        tabBarInactiveTintColor: INACTIVE_COLOR,
+    17	        tabBarStyle: {
+    18	          backgroundColor: TAB_BG,
+    19	          borderTopColor: BORDER_COLOR,
+    20	          borderTopWidth: 1,
+    21	          height: 62,
+    22	          paddingBottom: 8,
+    23	          paddingTop: 6,
+    24	        },
+    25	        tabBarLabelStyle: {
+    26	          fontSize: 10,
+    27	          fontWeight: '600',
+    28	          letterSpacing: 0.3,
+    29	        },
+    30	      }}
+    31	    >
+    32	      <Tabs.Screen
+    33	        name="scan"
+    34	        options={{
+    35	          title: '设备扫描',
+    36	          tabBarIcon: ({ color, size }) => (
+    37	            <Ionicons name="bluetooth" size={size} color={color} />
+    38	          ),
+    39	        }}
+    40	      />
+    41	      <Tabs.Screen
+    42	        name="monitor"
+    43	        options={{
+    44	          title: '数据监测',
+    45	          tabBarIcon: ({ color, size }) => (
+    46	            <Ionicons name="pulse" size={size} color={color} />
+    47	          ),
+    48	        }}
+    49	      />
+    50	      <Tabs.Screen
+    51	        name="alerts"
+    52	        options={{
+    53	          title: '预警记录',
+    54	          tabBarIcon: ({ color, size }) => (
+    55	            <Ionicons name="warning" size={size} color={color} />
+    56	          ),
+    57	        }}
+    58	      />
+    59	      <Tabs.Screen
+    60	        name="stats"
+    61	        options={{
+    62	          title: '数据统计',
+    63	          tabBarIcon: ({ color, size }) => (
+    64	            <Ionicons name="stats-chart" size={size} color={color} />
+    65	          ),
+    66	        }}
+    67	      />
+    68	      <Tabs.Screen
+    69	        name="settings"
+    70	        options={{
+    71	          title: '设置',
+    72	          tabBarIcon: ({ color, size }) => (
+    73	            <Ionicons name="settings" size={size} color={color} />
+    74	          ),
+    75	        }}
+    76	      />
+    77	    </Tabs>
+    78	  );
+    79	}
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+TodoAction(todos=[TodoItem(id='9', status='in_progress', priority='medium', content='安装必要依赖（expo-media-library、expo-file-system）', details='', group=None, agent_name=None)], command='update', thought="Now I have full context. Let's install dependencies and implement everything in parallel:", action=<ActionType.TODO: 'todo'>, content='')
+</action>
+<observation>
+TodoObservation(content='<system-reminder>\nYour todo list has changed. Here are the latest contents of your todo list:\n\n1. 扩展 types.ts：新增图传/热相相关类型 *high* [pending]\n\n2. 创建 imageTransfer.ts：图像分包合并工具函数 *high* [pending]\n\n3. 创建 thermalAnalysis.ts：热相数据解析与伪彩色映射工具 *high* [pending]\n\n4. 更新 bleContext.tsx：添加图传/热相数据通道和状态 *high* [pending]\n\n5. 更新 settings.tsx：添加图传/热相 UUID 配置项 *medium* [pending]\n\n6. 创建 image-transfer.tsx：蓝牙图传页 *high* [pending]\n\n7. 创建 thermal.tsx：热相分析页 *high* [pending]\n\n8. 更新 (tabs)/_layout.tsx：添加图传和热相两个新 Tab *high* [pending]\n\n9. 安装必要依赖（expo-media-library、expo-file-system） *medium* [in_progress]\n\n10. 运行 lint 检查并修复所有问题 *medium* [pending]\n</system-reminder>', state=TodoState(items=[TodoItem(id='1', status='pending', priority='high', content='扩展 types.ts：新增图传/热相相关类型', details='', group=None, agent_name=None), TodoItem(id='2', status='pending', priority='high', content='创建 imageTransfer.ts：图像分包合并工具函数', details='', group=None, agent_name=None), TodoItem(id='3', status='pending', priority='high', content='创建 thermalAnalysis.ts：热相数据解析与伪彩色映射工具', details='', group=None, agent_name=None), TodoItem(id='4', status='pending', priority='high', content='更新 bleContext.tsx：添加图传/热相数据通道和状态', details='', group=None, agent_name=None), TodoItem(id='5', status='pending', priority='medium', content='更新 settings.tsx：添加图传/热相 UUID 配置项', details='', group=None, agent_name=None), TodoItem(id='6', status='pending', priority='high', content='创建 image-transfer.tsx：蓝牙图传页', details='', group=None, agent_name=None), TodoItem(id='7', status='pending', priority='high', content='创建 thermal.tsx：热相分析页', details='', group=None, agent_name=None), TodoItem(id='8', status='pending', priority='high', content='更新 (tabs)/_layout.tsx：添加图传和热相两个新 Tab', details='', group=None, agent_name=None), TodoItem(id='9', status='in_progress', priority='medium', content='安装必要依赖（expo-media-library、expo-file-system）', details='', group=None, agent_name=None), TodoItem(id='10', status='pending', priority='medium', content='运行 lint 检查并修复所有问题', details='', group=None, agent_name=None)], updated_at='2026-05-17T09:23:09.881811+00:00'), system_reminder='', observation=<ObservationType.TODO: 'todo'>)
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && pnpm exec expo install expo-media-library expo-file-system 2>&1 | tail -8
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+env: load .env
+env: export EXPO_PUBLIC_APP_ID
+Dependency validation is unreliable in offline-mode
+› Installing 2 SDK 55.0.0 compatible native modules using pnpm
+> pnpm add expo-media-library@~55.0.9 expo-file-system@~55.0.10
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && grep -A3 '"plugins"' app.json | head -10
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      "expo-sqlite",
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**FileEditAction**
+Path: [/workspace/app-bobi1rqlk4ch/app.json]
+Thought: Now update app.json for media-library permission, then do all code changes together:
+Command: str_replace
+Old String: ```
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      "expo-sqlite",
+```
+New String: ```
+    "plugins": [
+      "expo-router",
+      "expo-asset",
+      "expo-sqlite",
+      ["expo-media-library", {
+        "photosPermission": "允许 $(PRODUCT_NAME) 访问相册以保存图像",
+        "savePhotosPermission": "允许 $(PRODUCT_NAME) 保存图像到相册"
+      }],
+```
+
+</action>
+<observation>
+The file /workspace/app-bobi1rqlk4ch/app.json has been edited.
+
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+THOUGHT: Now add image/thermal notification subscriptions inside connectDevice, right after the RX subscription, before the disconnect listener:
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && grep -n "resetDataTimeout\(\)" src/lib/bleContext.tsx | head -5
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+257:  const resetDataTimeout = useCallback(() => {
+381:          resetDataTimeout();
+434:      resetDataTimeout();
+440:  }, [stopScan, addLog, addAlert, appendRssiHistory, handleParsedFields, resetDataTimeout, stopAllTasks]);
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && sed -n '370,395p' src/lib/bleContext.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+          if (!characteristic?.value) return;
+
+          const bytes = base64ToBytes(characteristic.value);
+          const logEntry = createLogEntry('RX', bytes, device.id);
+          addLog(logEntry);
+          rxBytesBufferRef.current += bytes.length;
+
+          if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
+            handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
+          }
+
+          resetDataTimeout();
+        }
+      );
+
+      // 监听连接断开
+      disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
+        const dev = connectedDeviceRef.current;
+        const detail = error ? error.message : '连接意外断开';
+        const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
+        setAlerts(a => [alert, ...a].slice(0, 200));
+        setConnectedDevice(null);
+        setDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
+        setStats(DEFAULT_STATS);
+        stopAllTasks();
+      });
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+THOUGHT: Now add the image/thermal UUID settings section to settings.tsx. First find the right anchor:
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && grep -n "BLE UUID\|bleUuid\|DEFAULT_BLE_UUID\|BleUuidConfig\|SectionHeader\|showSaved\|import.*types" src/app/\(app\)/\(tabs\)/settings.tsx | head -20
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+19:import type { AppSettings, BleUuidConfig, DataAlertRule, FieldMapping, ThresholdOperator } from '@/lib/types';
+20:import { DEFAULT_BLE_UUID, BAUD_RATES, DEFAULT_SERIAL_CONFIG, PARITY_LABELS } from '@/lib/types';
+36:function SectionHeader({ title }: { title: string }) {
+418:// ============ BLE UUID 配置编辑 Modal ============
+421:  initial: BleUuidConfig;
+422:  onSave: (config: BleUuidConfig) => void;
+443:    setServiceUuid(DEFAULT_BLE_UUID.serviceUuid);
+444:    setRxCharUuid(DEFAULT_BLE_UUID.rxCharUuid);
+445:    setTxCharUuid(DEFAULT_BLE_UUID.txCharUuid);
+453:            <Text style={{ color: CYAN, fontSize: 14, fontWeight: '800' }}>BLE UUID 配置</Text>
+542:  const showSaved = useCallback(() => {
+549:    showSaved();
+550:  }, [updateSettings, showSaved]);
+570:    showSaved();
+571:  }, [editingRule, updateAlertRule, addAlertRule, showSaved]);
+591:    showSaved();
+592:  }, [editingMapping, updateFieldMapping, addFieldMapping, showSaved]);
+594:  // ---------- BLE UUID 操作 ----------
+595:  const handleSaveUuid = useCallback((config: BleUuidConfig) => {
+596:    updateSettings({ bleUuid: config });
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && grep -n "uuidModalVisible\|BLE UUID 配置 Modal\|BleUuidModal\|{/\* BLE UUID" src/app/\(app\)/\(tabs\)/settings.tsx | head -10
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+538:  const [uuidModalVisible, setUuidModalVisible] = useState(false);
+1073:      {/* BLE UUID 配置 Modal */}
+1075:        visible={uuidModalVisible}
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && sed -n '635,670p' src/app/\(app\)/\(tabs\)/settings.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+              backgroundColor: bleReady ? '#00E676' : '#FF3333',
+            }} />
+            <Text style={{ color: bleReady ? '#00E676' : '#FF3333', fontSize: 11 }}>
+              {bleReady ? '蓝牙适配器已就绪' : (bleError ?? '蓝牙未就绪')}
+            </Text>
+          </View>
+
+          {/* UUID 配置行 */}
+          <Pressable
+            cssInterop={false} onPress={() => setUuidModalVisible(true)}
+            style={({ pressed }) => ({
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              paddingHorizontal: 16, paddingVertical: 12, opacity: pressed ? 0.7 : 1,
+              borderBottomColor: '#1E1E1E', borderBottomWidth: 1,
+            })}
+          >
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={{ color: TEXT_PRIMARY, fontSize: 13, fontWeight: '600' }}>Service / Characteristic UUID</Text>
+              <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }} numberOfLines={1}>
+                SVC: {settings.bleUuid?.serviceUuid ?? DEFAULT_BLE_UUID.serviceUuid}
+              </Text>
+              <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }} numberOfLines={1}>
+                RX:  {settings.bleUuid?.rxCharUuid ?? DEFAULT_BLE_UUID.rxCharUuid}
+              </Text>
+              <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }} numberOfLines={1}>
+                TX:  {settings.bleUuid?.txCharUuid ?? DEFAULT_BLE_UUID.txCharUuid}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={TEXT_MUTED} />
+          </Pressable>
+
+          {/* 协议说明 */}
+          <View style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+            <Text style={{ color: TEXT_MUTED, fontSize: 10, lineHeight: 16 }}>
+              默认使用 Nordic UART Service（NUS）协议。如需连接其他 BLE 设备，请修改 UUID 为设备对应值。
+            </Text>
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>
+<action>
+**CmdRunAction (source=EventSource.AGENT, is_input=False)**
+COMMAND:
+cd /workspace/app-bobi1rqlk4ch && sed -n '668,695p' src/app/\(app\)/\(tabs\)/settings.tsx
+</action>
+<observation>
+**CmdOutputObservation (source=EventSource.AGENT, exit code=0, metadata={
+  "exit_code": 0,
+  "pid": -1,
+  "username": null,
+  "hostname": null,
+  "working_dir": "/workspace/app-bobi1rqlk4ch",
+  "py_interpreter_path": null,
+  "prefix": "",
+  "suffix": "\n[The command completed with exit code 0.]"
+})**
+--BEGIN AGENT OBSERVATION--
+            <Text style={{ color: TEXT_MUTED, fontSize: 10, lineHeight: 16 }}>
+              默认使用 Nordic UART Service（NUS）协议。如需连接其他 BLE 设备，请修改 UUID 为设备对应值。
+            </Text>
+          </View>
+        </View>
+
+        {/* ======= USB 串口设备配置 ======= */}
+        <SectionHeader title="USB 串口配置" />
+        <View style={{ backgroundColor: CARD_BG, borderTopColor: BORDER, borderBottomColor: BORDER, borderTopWidth: 1, borderBottomWidth: 1 }}>
+          {/* 串口连接状态 */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderBottomColor: '#1E1E1E', borderBottomWidth: 1 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connectedSerial ? '#00E676' : (serialError ? '#FF3333' : '#444444') }} />
+            <Text style={{ color: connectedSerial ? '#00E676' : (serialError ? '#FF3333' : TEXT_MUTED), fontSize: 11 }}>
+              {connectedSerial
+                ? `已连接: ${connectedSerial.displayName}`
+                : (serialError ?? '未连接串口设备（仅 Android 支持）')}
+            </Text>
+          </View>
+
+          {/* 波特率 */}
+          <SettingRow label="波特率" description="数据传输速率，需与设备端一致">
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', gap: 6 }}>
+              {BAUD_RATES.map(rate => {
+                const active = (settings.serialConfig?.baudRate ?? DEFAULT_SERIAL_CONFIG.baudRate) === rate;
+                return (
+                  <Pressable
+                    key={rate} cssInterop={false}
+                    onPress={() => {
+[The command completed with exit code 0.]
+[Current working directory: /workspace/app-bobi1rqlk4ch]
+--END AGENT OBSERVATION--
+</observation>

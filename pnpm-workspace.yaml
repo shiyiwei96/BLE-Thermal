@@ -33,6 +33,8 @@ minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - miaoda-expo-devkit
 onlyBuiltDependencies:
+  - "@shopify/react-native-skia"
+  - better-sqlite3
   - esbuild
 publicHoistPattern:
   - "@babel/*"
