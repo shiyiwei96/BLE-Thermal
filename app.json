@@ -21,7 +21,7 @@
         "backgroundColor": "#121212"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 1,
+      
       "package": "com.miaoda.appbobi1rqlk4ch",
       "permissions": [
         "android.permission.BLUETOOTH",
@@ -29,7 +29,14 @@
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.hardware.usb.host"
+        "android.hardware.usb.host",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.INTERNET"
       ]
     },
     "web": {
@@ -37,6 +44,12 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      [
+        "expo-dev-client",
+        {
+          "launchMode": "most-recent"
+        }
+      ],
       "expo-router",
       "expo-asset",
       "expo-sqlite",
@@ -60,7 +73,6 @@
           "bluetoothAlwaysPermission": "允许蓝牙监测预警访问蓝牙以扫描和连接蓝牙设备"
         }
       ],
-      "expo-image",
       "expo-file-system",
       "expo-document-picker",
       "expo-sharing",
@@ -73,11 +85,15 @@
         }
       ]
     ],
-    "router": {
-      "root": "src"
-    },
+    "router": {},
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8cc7581c-1254-4142-9580-c3e5baaa5959"
+      }
     }
   }
 }
