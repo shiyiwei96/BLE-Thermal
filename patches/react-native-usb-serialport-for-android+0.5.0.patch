@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-usb-serialport-for-android/android/build.gradle b/node_modules/react-native-usb-serialport-for-android/android/build.gradle
+index da7756d..4f7557c 100644
+--- a/node_modules/react-native-usb-serialport-for-android/android/build.gradle
++++ b/node_modules/react-native-usb-serialport-for-android/android/build.gradle
+@@ -3,7 +3,7 @@ buildscript {
+         repositories {
+             google()
+             mavenCentral()
+-            jcenter()
++            
+         }
+ 
+         dependencies {

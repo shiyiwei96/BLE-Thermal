@@ -7,7 +7,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "devkit-lint"
+    "lint": "devkit-lint",
+    "postinstall":"patch-package"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -86,6 +87,7 @@
     "esbuild": "^0.12.29",
     "eslint-plugin-expo": "^1.0.0",
     "oxlint": "^1.60.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.8.3",
     "prettier-plugin-tailwindcss": "^0.5.11",
     "tailwindcss": "^3.4.17",
