@@ -1,13 +1,22 @@
 diff --git a/node_modules/react-native-usb-serialport-for-android/android/build.gradle b/node_modules/react-native-usb-serialport-for-android/android/build.gradle
-index da7756d..4f7557c 100644
+index da7756d..d98e4bc 100644
 --- a/node_modules/react-native-usb-serialport-for-android/android/build.gradle
 +++ b/node_modules/react-native-usb-serialport-for-android/android/build.gradle
 @@ -3,7 +3,7 @@ buildscript {
          repositories {
              google()
-             mavenCentral()
+             mavenCentral() 
 -            jcenter()
-+            
++            mavenCentral()
          }
  
          dependencies {
+@@ -51,7 +51,7 @@ repositories {
+     maven { url 'https://jitpack.io' }
+     google()
+     mavenCentral()
+-    jcenter()
++    mavenCentral()
+ }
+ 
+ dependencies {
