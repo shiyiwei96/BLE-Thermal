@@ -18,7 +18,8 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#121212"
+        "backgroundColor": "#121212",
+        "ndkVersion": "23.1.7779620"
       },
       "predictiveBackGestureEnabled": false,
       

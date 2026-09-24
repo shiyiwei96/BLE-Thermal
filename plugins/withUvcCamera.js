@@ -2,6 +2,20 @@ const { withAndroidManifest, withProjectBuildGradle, withDangerousMod } = requir
 const fs = require('fs');
 const path = require('path');
 
+const { execSync } = require('child_process');
+
+// 在插件中下载 NDK r14b
+const ndkVersion = 'android-ndk-r14b';
+const ndkDir = `${config.modRequest.platformProjectRoot}/ndk/${ndkVersion}`;
+const ndkZip = `${config.modRequest.platformProjectRoot}/ndk/${ndkVersion}.zip`;
+
+if (!fs.existsSync(ndkDir)) {
+  console.log('[withUvcCamera] 正在下载 NDK r14b...');
+  execSync(`curl -L -o "${ndkZip}" https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip`);
+  execSync(`unzip -q "${ndkZip}" -d "${config.modRequest.platformProjectRoot}/ndk/"`);
+  fs.unlinkSync(ndkZip);
+}
+
 // ---- 1. 修改 AndroidManifest.xml ----
 function withUvcManifest(config) {
   return withAndroidManifest(config, (config) => {
@@ -114,15 +128,21 @@ function withLocalProperties(config) {
         config.modRequest.platformProjectRoot,
         'local.properties'
       );
-      const contents = `sdk.dir=/opt/android/sdk
-ndk.dir=/opt/android/sdk/ndk/14.1.3560054
-uvccamera.ndk.dir=/opt/android/sdk/ndk/14.1.3560054
+      // EAS 云端 SDK 默认路径为 /opt/android/sdk
+      // NDK 路径需要与 EAS 构建镜像中的实际版本匹配
+      const sdkDir = '/opt/android/sdk';
+      const ndkDir = `${sdkDir}/ndk/23.1.7779620`; // 使用 EAS 镜像中可用的 NDK 版本
+      const contents = `sdk.dir=${sdkDir}
+ndk.dir=${ndkDir}
+uvccamera.ndk.dir=${ndkDir}
 `;
       fs.writeFileSync(localPropertiesPath, contents);
+      console.log(`[withUvcCamera] 已生成 local.properties: sdk.dir=${sdkDir}, ndk.dir=${ndkDir}`);
       return config;
     },
   ]);
 }
+
 
 
 
