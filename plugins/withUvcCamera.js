@@ -11,7 +11,7 @@ const ndkZip = `${config.modRequest.platformProjectRoot}/ndk/${ndkVersion}.zip`;
 
 if (!fs.existsSync(ndkDir)) {
   console.log('[withUvcCamera] 正在下载 NDK r14b...');
-  execSync(`curl -L -o "${ndkZip}" https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip`);
+  execSync(`curl -L -o "${ndkZip}"http://mirrors.neusoft.edu.cn/android/repository/android-ndk-r14b-linux-x86_64.zip`);
   execSync(`unzip -q "${ndkZip}" -d "${config.modRequest.platformProjectRoot}/ndk/"`);
   fs.unlinkSync(ndkZip);
 }
