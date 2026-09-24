@@ -44,3 +44,71 @@ function withUvcManifest(config) {
     return config;
   });
 }
+
+// ---- 2. 创建 device_filter.xml ----
+function withDeviceFilter(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const xmlDir = path.join(config.modRequest.platformProjectRoot, 'app/src/main/res/xml');
+      fs.mkdirSync(xmlDir, { recursive: true });
+      const filePath = path.join(xmlDir, 'device_filter.xml');
+      fs.writeFileSync(filePath, `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <usb-device class="14" />
+</resources>
+`);
+      return config;
+    },
+  ]);
+}
+
+// ---- 3. 修改 android/build.gradle（加 libcommon 仓库）----
+function withLibcommonRepo(config) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== 'groovy') return config;
+    let contents = config.modResults.contents;
+
+    if (!contents.includes('saki4510t/libcommon')) {
+      // 在 allprojects.repositories 里插入 maven 仓库
+      contents = contents.replace(
+        /(allprojects\s*\{\s*repositories\s*\{)/,
+        `$1
+        maven { url 'https://raw.githubusercontent.com/saki4510t/libcommon/master/repository'; allowInsecureProtocol = true }`
+      );
+    }
+    config.modResults.contents = contents;
+    return config;
+  });
+}
+
+// ---- 4. 修改 android/settings.gradle（include libuvccamera）----
+function withUvcSettingsGradle(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const settingsPath = path.join(config.modRequest.platformProjectRoot, 'settings.gradle');
+      let contents = fs.readFileSync(settingsPath, 'utf-8');
+
+      if (!contents.includes(':libuvccamera')) {
+        contents += `
+include ':usbCameraCommon'
+project(':usbCameraCommon').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-uvc-camera/usbCameraCommon')
+
+include ':libuvccamera'
+project(':libuvccamera').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-uvc-camera/libuvccamera')
+`;
+        fs.writeFileSync(settingsPath, contents);
+      }
+      return config;
+    },
+  ]);
+}
+
+module.exports = function withUvcCamera(config) {
+  config = withUvcManifest(config);
+  config = withDeviceFilter(config);
+  config = withLibcommonRepo(config);
+  config = withUvcSettingsGradle(config);
+  return config;
+};
