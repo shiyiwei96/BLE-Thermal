@@ -105,10 +105,32 @@ project(':libuvccamera').projectDir = new File(rootProject.projectDir, '../node_
   ]);
 }
 
+// ---- 5. 创建 local.properties（解决 libuvccamera 找不到 NDK 路径）----
+function withLocalProperties(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const localPropertiesPath = path.join(
+        config.modRequest.platformProjectRoot,
+        'local.properties'
+      );
+      const contents = `sdk.dir=/opt/android/sdk
+ndk.dir=/opt/android/sdk/ndk/14.1.3560054
+uvccamera.ndk.dir=/opt/android/sdk/ndk/14.1.3560054
+`;
+      fs.writeFileSync(localPropertiesPath, contents);
+      return config;
+    },
+  ]);
+}
+
+
+
 module.exports = function withUvcCamera(config) {
   config = withUvcManifest(config);
   config = withDeviceFilter(config);
   config = withLibcommonRepo(config);
   config = withUvcSettingsGradle(config);
+  config = withLocalProperties(config);
   return config;
 };
