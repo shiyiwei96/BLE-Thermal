@@ -172,6 +172,48 @@ uvccamera.ndk.dir=${ndkDir}
 }
 
 
+// ---- 6. 为 libuvccamera 单独指定 NDK 版本 ----
+function withLibuvccameraNdkVersion(config) {
+  return withDangerousMod(config, [
+    'android',
+    async (config) => {
+      const gradlePath = path.join(
+        config.modRequest.projectRoot,
+        'node_modules/react-native-uvc-camera/libuvccamera/build.gradle'
+      );
+
+      // 文件不存在就跳过（可能未安装该库）
+      if (!fs.existsSync(gradlePath)) {
+        console.log('[withUvcCamera] 未找到 libuvccamera/build.gradle，跳过');
+        return config;
+      }
+
+      let contents = fs.readFileSync(gradlePath, 'utf-8');
+
+      // 已设置过就不重复插入
+      if (contents.includes('ndkVersion')) {
+        console.log('[withUvcCamera] libuvccamera 已设置 ndkVersion，跳过');
+        return config;
+      }
+
+      // 在第一个 android { 块内插入 ndkVersion
+      const ndkVersion = '14.1.3816874'; // NDK r14b 的版本号
+      const insertRegex = /(android\s*\{)/;
+      if (insertRegex.test(contents)) {
+        contents = contents.replace(
+          insertRegex,
+          `$1\n    ndkVersion "${ndkVersion}"\n`
+        );
+        fs.writeFileSync(gradlePath, contents);
+        console.log(`[withUvcCamera] 已为 libuvccamera 设置 ndkVersion ${ndkVersion}`);
+      } else {
+        console.warn('[withUvcCamera] 未在 build.gradle 中找到 android { 块');
+      }
+
+      return config;
+    },
+  ]);
+}
 
 module.exports = function withUvcCamera(config) {
   config = withUvcManifest(config);
@@ -179,5 +221,6 @@ module.exports = function withUvcCamera(config) {
   config = withLibcommonRepo(config);
   config = withUvcSettingsGradle(config);
   config = withLocalProperties(config);
+  config = withLibuvccameraNdkVersion(config);
   return config;
 };
