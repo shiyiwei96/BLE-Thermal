@@ -1,6 +1,10 @@
 #!/bin/bash
 if [[ "$EAS_BUILD_PLATFORM" == "android" ]]; then
-  echo "Installing libncurses5..."
-  sudo apt-get --quiet update --yes
-  sudo apt-get --quiet install --yes libncurses5
+  echo "Installing libncurses5 and libtinfo5..."
+  sudo apt-get update --yes
+  cd /tmp
+  wget -q http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
+  wget -q http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.1_amd64.deb
+  sudo apt install --yes ./libtinfo5_6.3-2ubuntu0.1_amd64.deb ./libncurses5_6.3-2ubuntu0.1_amd64.deb
+  rm -f /tmp/libtinfo5_*.deb /tmp/libncurses5_*.deb
 fi
