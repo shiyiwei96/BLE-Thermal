@@ -187,29 +187,87 @@ export default function ThermalScreen() {
   const unit = settings.thermalUnit;
 
   // 同步新帧到缓存（仅最新一帧）+ 追加到录制
-  React.useEffect(() => {
-    if (latestThermalFrame && latestThermalDataUri) {
-      setFrameUriCache(prev => ({
-        ...prev,
-        [latestThermalFrame.id]: latestThermalDataUri,
-      }));
-      // 追加到录制中
-      if (recordingRef.current) {
-        const updated = appendFrame(recordingRef.current, latestThermalFrame, latestThermalDataUri);
-        recordingRef.current = updated;
-        setRecording({ ...updated });
+React.useEffect(() => {
+  if (!latestThermalFrame || !latestThermalDataUri) return;
+
+  // 写入缓存：已存在则返回同一引用，React 会跳过重渲染
+  setFrameUriCache(prev => {
+    if (prev[latestThermalFrame.id]) return prev;
+    return { ...prev, [latestThermalFrame.id]: latestThermalDataUri };
+  });
+
+  // 追加到录制中
+  if (recordingRef.current) {
+    const updated = appendFrame(recordingRef.current, latestThermalFrame, latestThermalDataUri);
+    recordingRef.current = updated;
+    setRecording({ ...updated });
+  }
+}, [latestThermalFrame, latestThermalDataUri]);
+
+// 批量预计算历史帧的 dataUri（避免每个 item 渲染时 setState）
+React.useEffect(() => {
+  setFrameUriCache(prev => {
+    let changed = false;
+    const next = { ...prev };
+
+    for (const frame of thermalFrames) {
+      if (!next[frame.id]) {
+        const pixels = renderThermalPixels(frame, colormap);
+        next[frame.id] = pixelsToDataUri(pixels, frame.width, frame.height);
+        changed = true;
       }
     }
-  }, [latestThermalFrame, latestThermalDataUri]);
 
-  // 获取缓存 dataUri 或实时渲染
-  const getFrameUri = useCallback((frame: ThermalFrame): string => {
-    if (frameUriCache[frame.id]) return frameUriCache[frame.id];
-    const pixels = renderThermalPixels(frame, colormap);
-    const uri = pixelsToDataUri(pixels, frame.width, frame.height);
-    setFrameUriCache(prev => ({ ...prev, [frame.id]: uri }));
-    return uri;
-  }, [frameUriCache, colormap]);
+    // 同时补上最新帧
+    if (latestThermalFrame && latestThermalDataUri && !next[latestThermalFrame.id]) {
+      next[latestThermalFrame.id] = latestThermalDataUri;
+      changed = true;
+    }
+
+    // 缓存裁剪：最多保留 100 条，超出按 key 顺序保留最后 100 条
+    const keys = Object.keys(next);
+    if (keys.length > 100) {
+      const keep = keys.slice(-100);
+      const trimmed: Record<string, string> = {};
+      for (const k of keep) trimmed[k] = next[k];
+      return trimmed;
+    }
+
+    // 无变化时返回原引用，跳过渲染
+    return changed ? next : prev;
+  });
+}, [thermalFrames, latestThermalFrame, latestThermalDataUri, colormap]);
+
+// 清理已不在 thermalFrames 中的缓存条目，防内存泄漏
+React.useEffect(() => {
+  setFrameUriCache(prev => {
+    const validIds = new Set(thermalFrames.map(f => f.id));
+    if (latestThermalFrame) validIds.add(latestThermalFrame.id);
+
+    let changed = false;
+    const next: Record<string, string> = {};
+    for (const [id, uri] of Object.entries(prev)) {
+      if (validIds.has(id)) {
+        next[id] = uri;
+      } else {
+        changed = true;
+      }
+    }
+    return changed ? next : prev;
+  });
+}, [thermalFrames, latestThermalFrame]);
+
+
+  // 获取缓存的 dataUri；miss 时同步渲染但不写回 state（避免渲染循环）
+const getFrameUri = useCallback((frame: ThermalFrame): string => {
+  const cached = frameUriCache[frame.id];
+  if (cached) return cached;
+
+  // 缓存未命中：同步渲染一次，仅返回结果，不 setState
+  const pixels = renderThermalPixels(frame, colormap);
+  return pixelsToDataUri(pixels, frame.width, frame.height);
+}, [frameUriCache, colormap]);
+
 
   useFocusEffect(useCallback(() => {
     // 焦点切换时重置到实时模式
@@ -631,7 +689,7 @@ export default function ThermalScreen() {
           ) : (
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
               {thermalFrames.map(frame => {
-                const uri = getFrameUri(frame);
+                const uri = frameUriCache[frame.id] ?? '';
                 const isActive = viewFrame?.id === frame.id || (isLive && frame.id === latestThermalFrame?.id);
                 return (
                   <FrameThumb

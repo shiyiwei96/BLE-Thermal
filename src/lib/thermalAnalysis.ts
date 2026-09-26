@@ -12,6 +12,7 @@ import type { ThermalColormap, ThermalFrame, ThermalRegionStats } from './types'
 import { genId } from './bleService';
 
 // ============ 数据解析 ============
+import { THERMAL_WIDTH, THERMAL_HEIGHT, THERMAL_POINT_COUNT } from './types';
 
 export function parseThermalFrame(bytes: number[]): ThermalFrame | null {
   if (bytes.length < 5) return null;

@@ -51,6 +51,28 @@ export interface BleDevice {
   address: string; // iOS: UUID, Android: MAC 地址
 }
 
+// 设备数据模式
+export type DeviceDataMode = 'DATA' | 'IMAGE' | 'THERMAL';
+
+// 设备名前缀 → 数据模式
+export const DEVICE_DATA_MODE: Record<string, DeviceDataMode> = {
+  'D30SP':   'DATA',   // 波特率低，走普通数据解析
+  'DX-BT31': 'IMAGE',  // 921600 高波特率，走图传
+  'D24': 'THERMAL',
+};
+
+// 根据设备名解析数据模式
+export function resolveDataMode(deviceName: string | null | undefined): DeviceDataMode {
+  if (!deviceName) return 'DATA';
+  const upper = deviceName.toUpperCase();
+  for (const key of Object.keys(DEVICE_DATA_MODE)) {
+    if (upper.startsWith(key.toUpperCase())) {
+      return DEVICE_DATA_MODE[key];
+    }
+  }
+  return 'DATA'; // 默认当数据模式
+}
+
 // 数据方向
 export type DataDirection = 'RX' | 'TX';
 
@@ -104,6 +126,7 @@ export interface FieldHistoryPoint {
   value: number;
 }
 
+
 // ============ BLE UUID 配置 ============
 export interface BleUuidConfig {
   serviceUuid: string;    // 服务 UUID
@@ -113,10 +136,46 @@ export interface BleUuidConfig {
 
 // Nordic UART Service 默认 UUID
 export const DEFAULT_BLE_UUID: BleUuidConfig = {
-  serviceUuid: '6E400001-B5A3-F393-E0A9-E50E24DCCA9E',
-  rxCharUuid:  '6E400003-B5A3-F393-E0A9-E50E24DCCA9E', // Notify
-  txCharUuid:  '6E400002-B5A3-F393-E0A9-E50E24DCCA9E', // Write
+  serviceUuid: '0000FFE0-0000-1000-8000-00805F9B34FB',
+  rxCharUuid:  '0000FFE1-0000-1000-8000-00805F9B34FB', // Notify
+  txCharUuid:  '0000FFE2-0000-1000-8000-00805F9B34FB', // Write
 };
+
+export type KnownBleUuidMap = {
+  [deviceName: string]: BleUuidConfig;
+};
+
+export const KNOWN_BLE_UUID: KnownBleUuidMap = {
+  'D30SP': {
+    serviceUuid: '0000FFE0-0000-1000-8000-00805F9B34FB',
+    rxCharUuid:  '0000FFE1-0000-1000-8000-00805F9B34FB', // Notify
+    txCharUuid:  '0000FFE1-0000-1000-8000-00805F9B34FB', // Write
+  },
+  'DX-BT31': {
+    serviceUuid: '0000FFE0-0000-1000-8000-00805F9B34FB',
+    rxCharUuid:  '0000FFE1-0000-1000-8000-00805F9B34FB', // Notify
+    txCharUuid:  '0000FFE2-0000-1000-8000-00805F9B34FB', // Write
+  },
+  'D24': {
+    serviceUuid: '0000FFE0-0000-1000-8000-00805F9B34FB',
+    rxCharUuid:  '0000FFE1-0000-1000-8000-00805F9B34FB', // Notify
+    txCharUuid:  '0000FFE2-0000-1000-8000-00805F9B34FB', // Write
+  },
+};
+
+// 根据设备名找配置（支持前缀匹配）
+export function resolveBleConfig(deviceName: string | null | undefined): BleUuidConfig | null {
+  if (!deviceName) return null;
+  for (const key of Object.keys(KNOWN_BLE_UUID)) {
+    if (deviceName.startsWith(key)) return KNOWN_BLE_UUID[key];
+  }
+  return null;
+}
+
+// 找不到就用默认配置
+export function resolveBleConfigOrDefault(deviceName: string | null | undefined): BleUuidConfig {
+  return resolveBleConfig(deviceName) ?? DEFAULT_BLE_UUID;
+}
 
 // 应用设置
 export interface AppSettings {
@@ -180,6 +239,14 @@ export interface ImageTransferProgress {
 /** 伪彩色映射方案 */
 export type ThermalColormap = 'iron' | 'rainbow' | 'grayscale' | 'plasma';
 
+// 热相参数 32*24
+export const THERMAL_WIDTH = 32;
+export const THERMAL_HEIGHT = 24;
+export const THERMAL_POINT_COUNT = THERMAL_WIDTH * THERMAL_HEIGHT; // 768
+export const THERMAL_BYTES_FLOAT32 = THERMAL_POINT_COUNT * 4;      // 3072
+export const THERMAL_BYTES_INT16 = THERMAL_POINT_COUNT * 2;        // 1536
+
+
 /** 单帧热成像数据 */
 export interface ThermalFrame {
   id: string;
@@ -209,8 +276,8 @@ export interface ImgThermalUuidConfig {
 }
 
 export const DEFAULT_IMG_THERMAL_UUID: ImgThermalUuidConfig = {
-  imageCharUuid:   '6E400004-B5A3-F393-E0A9-E50E24DCCA9E',
-  thermalCharUuid: '6E400005-B5A3-F393-E0A9-E50E24DCCA9E',
+  imageCharUuid:   '0000FFE0-0000-1000-8000-00805F9B34FB',
+  thermalCharUuid: '0000FFE0-0000-1000-8000-00805F9B34FB',
 };
 
 // ============ 文件分析 ============

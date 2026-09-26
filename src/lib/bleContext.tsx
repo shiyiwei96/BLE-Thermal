@@ -4,6 +4,7 @@
  * 支持同时连接最多 4 个设备（多设备管理）
  */
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { resolveBleConfigOrDefault,resolveDataMode, type DeviceDataMode } from './types';
 import { State as BleAdapterState, type Subscription } from 'react-native-ble-plx';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
@@ -21,6 +22,7 @@ import type {
   ImageTransferRecord,
   ImageTransferProgress,
   ThermalFrame,
+  ThermalColormap,
 } from './types';
 import {
   DEFAULT_BLE_UUID,
@@ -43,10 +45,10 @@ import {
   requestAndroidPermissions,
 } from './bleService';
 import {
-  parseImageChunk,
-  mergeChunks,
-  createProgress,
+  createFrameRecord,
+  jpegBytesToDataUri,
   createImageRecord,
+  createProgress,
   MAX_IMAGE_HISTORY,
 } from './imageTransfer';
 import {
@@ -56,6 +58,74 @@ import {
   MAX_THERMAL_HISTORY,
 } from './thermalAnalysis';
 import { sendAlertNotification } from './notificationService';
+
+
+// ============ 热相协议常量 ============
+const THERMAL_W = 32;
+const THERMAL_H = 24;
+const THERMAL_DATA_BYTES = THERMAL_W * THERMAL_H * 2;  // 1536
+const THERMAL_HEADER_LEN = 4;
+const THERMAL_TAIL_LEN = 2;                              // 校验
+const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL_LEN; // 1542
+const THERMAL_OFFSET = -40;
+
+/**
+ * 解析 32×24 int16 温度矩阵（1536 字节）为 ThermalFrame
+ * 协议：帧头 5A 06 02 00 + 1536B int16 小端 + 2B 校验
+ * 温度公式：raw / 100 - 40
+ */
+function parseThermalInt16(bytes: number[]): ThermalFrame | null {
+  if (bytes.length < THERMAL_DATA_BYTES) return null;
+
+  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
+  const raw: number[] = new Array(THERMAL_W * THERMAL_H);
+
+  for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
+    const v = view.getInt16(i * 2, true) / 100 + THERMAL_OFFSET;
+    raw[i] = v;
+  }
+
+  // ---- 3×3 中值滤波去坏点 ----
+  const tempData = new Array(THERMAL_W * THERMAL_H);
+  for (let y = 0; y < THERMAL_H; y++) {
+    for (let x = 0; x < THERMAL_W; x++) {
+      const neighbors: number[] = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < THERMAL_H && nx >= 0 && nx < THERMAL_W) {
+            neighbors.push(raw[ny * THERMAL_W + nx]);
+          }
+        }
+      }
+      neighbors.sort((a, b) => a - b);
+      tempData[y * THERMAL_W + x] = neighbors[Math.floor(neighbors.length / 2)];
+    }
+  }
+
+  let maxC = -Infinity, minC = Infinity, sum = 0;
+  let maxIdx = 0, minIdx = 0;
+  for (let i = 0; i < tempData.length; i++) {
+    const v = tempData[i];
+    if (v > maxC) { maxC = v; maxIdx = i; }
+    if (v < minC) { minC = v; minIdx = i; }
+    sum += v;
+  }
+
+  return {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    receivedAt: Date.now(),
+    width: THERMAL_W,
+    height: THERMAL_H,
+    tempData,
+    maxTemp: maxC,
+    minTemp: minC,
+    avgTemp: sum / tempData.length,
+    maxPos: { x: maxIdx % THERMAL_W, y: Math.floor(maxIdx / THERMAL_W) },
+    minPos: { x: minIdx % THERMAL_W, y: Math.floor(minIdx / THERMAL_W) },
+  };
+}
+
 
 // ============ 默认值 ============
 const DEFAULT_SETTINGS: AppSettings = {
@@ -113,6 +183,9 @@ interface BleContextType extends BleState {
   imageHistory: ImageTransferRecord[];
   imageProgress: ImageTransferProgress | null;
   clearImageHistory: () => void;
+  latestImageDataUri: string | null;
+  imageStreamMode: boolean;
+  setImageStreamMode: (on: boolean) => void;
   // 热相
   thermalFrames: ThermalFrame[];
   latestThermalFrame: ThermalFrame | null;
@@ -139,6 +212,35 @@ export function useBle(): BleContextType {
   return ctx;
 }
 
+
+/**
+ * 判断一包数据是否为"可打印 ASCII 文本"
+ * 文本数据包几乎全是可打印字符
+ * 二进制 包极难凑出连续可打印字符
+ */
+function isPrintableAsciiPacket(bytes: number[]): boolean {
+  if (bytes.length === 0) return false;
+  let printable = 0;
+  for (const b of bytes) {
+    // 0x20(空格) ~ 0x7E(~)，加上 \r \n \t
+    if ((b >= 0x20 && b <= 0x7E) || b === 0x0A || b === 0x0D || b === 0x09) {
+      printable++;
+    }
+  }
+  return printable / bytes.length >= 0.9;
+}
+
+
+// ===== 图传/视频流缓冲区 =====
+const imageBufferRef = useRef<number[]>([]);
+const imageLastRenderRef = useRef<number>(0);
+const imageRenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const imagePendingFrameRef = useRef<string | null>(null);
+const dataModeRef = useRef<DeviceDataMode>('DATA');
+// ===== 热相缓冲区 =====
+const thermalBufferRef = useRef<number[]>([]);
+
+
 // ============ BleProvider ============
 export function BleProvider({ children }: { children: React.ReactNode }) {
   const [bleReady, setBleReady] = useState(false);
@@ -152,10 +254,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [parsedFields, setParsedFields] = useState<Record<string, ParsedFieldState>>({});
 
+  
   // ===== 图传状态 =====
   const [imageHistory, setImageHistory] = useState<ImageTransferRecord[]>([]);
   const [imageProgress, setImageProgress] = useState<ImageTransferProgress | null>(null);
   const imageProgressRef = useRef<ImageTransferProgress | null>(null);
+  const [latestImageDataUri, setLatestImageDataUri] = useState<string | null>(null);
+  const [imageStreamMode, setImageStreamMode] = useState(false);
 
   // ===== 热相状态 =====
   const [thermalFrames, setThermalFrames] = useState<ThermalFrame[]>([]);
@@ -437,150 +542,359 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setIsScanning(false);
   }, []);
 
-  // ============ 内部：连接设备并设置主状态 ============
+
+
+  // ============ 图传帧处理（区分单帧/流模式） ============
+const handleImageFrame = useCallback((dataUri: string) => {
+  // 流模式：只更新最新帧，节流 10fps，不存历史
+  if (imageStreamMode) {
+    imagePendingFrameRef.current = dataUri;
+    const now = Date.now();
+    const RENDER_INTERVAL = 100;
+
+    if (now - imageLastRenderRef.current >= RENDER_INTERVAL) {
+      imageLastRenderRef.current = now;
+      setLatestImageDataUri(dataUri);
+      imagePendingFrameRef.current = null;
+    } else if (!imageRenderTimerRef.current) {
+      imageRenderTimerRef.current = setTimeout(() => {
+        imageRenderTimerRef.current = null;
+        if (imagePendingFrameRef.current) {
+          imageLastRenderRef.current = Date.now();
+          setLatestImageDataUri(imagePendingFrameRef.current);
+          imagePendingFrameRef.current = null;
+        }
+      }, RENDER_INTERVAL - (now - imageLastRenderRef.current));
+    }
+    return;
+  }
+
+  // 单帧模式：存历史
+  const record = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    receivedAt: Date.now(),
+    totalChunks: 1,
+    receivedChunks: 1,
+    dataUri,
+    isComplete: true,
+  };
+  setImageHistory(prev => [record, ...prev].slice(0, MAX_IMAGE_HISTORY));
+  setLatestImageDataUri(dataUri);
+}, [imageStreamMode]);
+
+// ============ 图传数据切分（FF D9 边界） ============
+const feedImageData = useCallback((bytes: number[]) => {
+  try {
+    const buf = imageBufferRef.current;
+    buf.push(...bytes);
+
+    while (true) {
+      let endIdx = -1;
+      for (let i = 0; i < buf.length - 1; i++) {
+        if (buf[i] === 0xFF && buf[i + 1] === 0xD9) {
+          endIdx = i + 2;
+          break;
+        }
+      }
+      if (endIdx < 0) break;
+
+      const frameBytes = buf.slice(0, endIdx);
+      const isJpeg = frameBytes.length >= 2
+        && frameBytes[0] === 0xFF && frameBytes[1] === 0xD8;
+
+      const remaining = buf.slice(endIdx);
+      buf.length = 0;
+      buf.push(...remaining);
+
+      if (isJpeg) {
+        const dataUri = jpegBytesToDataUri(frameBytes);
+        handleImageFrame(dataUri);
+      }
+    }
+
+    // 溢出保护：512KB 没找到 FF D9 就清空
+    if (imageBufferRef.current.length > 512 * 1024) {
+      console.warn('图传缓冲区溢出，清空');
+      imageBufferRef.current = [];
+    }
+  } catch (e) {
+    console.log('图传切分错误:', e);
+  }
+}, [handleImageFrame]);
+
+// 热相渲染节流
+const thermalLastRenderRef = useRef<number>(0);
+const thermalPendingRef = useRef<ThermalFrame | null>(null);
+const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+const renderThermalNow = useCallback((frame: ThermalFrame) => {
+  const colormap = settingsRef.current.thermalColormap as ThermalColormap;
+  const pixels = renderThermalPixels(frame, colormap);
+  const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
+
+  setLatestThermalFrame(frame);
+  setLatestThermalDataUri(dataUri);
+  setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
+  updateDeviceTempHistory('primary', frame.maxTemp, frame.minTemp, frame.avgTemp);
+}, [updateDeviceTempHistory]);
+
+const handleThermalFrame = useCallback((tempBytes: number[]) => {
+  try {
+    const frame = parseThermalInt16(tempBytes);
+    if (!frame) return;
+
+    thermalPendingRef.current = frame;
+    const now = Date.now();
+    const INTERVAL = 100; // 10fps
+
+    if (now - thermalLastRenderRef.current >= INTERVAL) {
+      thermalLastRenderRef.current = now;
+      renderThermalNow(frame);
+      thermalPendingRef.current = null;
+    } else if (!thermalTimerRef.current) {
+      thermalTimerRef.current = setTimeout(() => {
+        thermalTimerRef.current = null;
+        if (thermalPendingRef.current) {
+          thermalLastRenderRef.current = Date.now();
+          renderThermalNow(thermalPendingRef.current);
+          thermalPendingRef.current = null;
+        }
+      }, INTERVAL - (now - thermalLastRenderRef.current));
+    }
+  } catch (e) {
+    console.log('热相处理错误:', e);
+  }
+}, [renderThermalNow]);
+
+
+// ============ 热相数据切分（帧头 5A 06 02 00） ============
+const feedThermalData = useCallback((bytes: number[]) => {
+  const buf = thermalBufferRef.current;
+  buf.push(...bytes);
+
+  while (true) {
+    // 找帧头 5A 06 02 00
+    let headerIdx = -1;
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+        headerIdx = i;
+        break;
+      }
+    }
+    if (headerIdx < 0) {
+      if (buf.length > 3) {
+        const keep = buf.slice(-3);
+        buf.length = 0;
+        buf.push(...keep);
+      }
+      break;
+    }
+    if (headerIdx > 0) buf.splice(0, headerIdx);
+
+    // 数据不够一帧，等下一包
+    if (buf.length < 4 + THERMAL_DATA_BYTES) break;
+
+    // 提取 1536 字节温度数据
+    const tempBytes = buf.slice(4, 4 + THERMAL_DATA_BYTES);
+    buf.splice(0, 4 + THERMAL_DATA_BYTES);
+
+    // 丢弃到下一个帧头之间的字节（校验/垃圾，长度不固定）
+    let nextHeaderIdx = -1;
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+        nextHeaderIdx = i;
+        break;
+      }
+    }
+    if (nextHeaderIdx > 0) buf.splice(0, nextHeaderIdx);
+
+    handleThermalFrame(tempBytes);
+  }
+
+  if (buf.length > THERMAL_DATA_BYTES * 4) {
+    console.warn('热相缓冲区溢出，清空');
+    buf.length = 0;
+  }
+}, [handleThermalFrame]);
+
+
+
+
+// =================回调函数// =================
   const _connectPrimary = useCallback(async (device: BleDevice) => {
-    const connectedPlx = await bleManager.connectToDevice(device.id, {
-      autoConnect: false,
-      requestMTU: 512,
-    });
-    await connectedPlx.discoverAllServicesAndCharacteristics();
+  const connectedPlx = await bleManager.connectToDevice(device.id, {
+    autoConnect: false,
+    requestMTU: 512,
+  });
+  await connectedPlx.discoverAllServicesAndCharacteristics();
 
-    const adapted = adaptDevice(connectedPlx, true);
-    setConnectedDevice(adapted);
-    setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
-    setStats(DEFAULT_STATS);
-    setParsedFields({});
-    ruleLastAlertRef.current = {};
+  const adapted = adaptDevice(connectedPlx, true);
 
-    const currentUuid = settingsRef.current.bleUuid;
-    const { serviceUuid, rxCharUuid } = currentUuid;
-    const { imageCharUuid, thermalCharUuid } = settingsRef.current.imgThermalUuid;
+  // 根据设备名选择 UUID 配置
+  const deviceConfig = resolveBleConfigOrDefault(adapted.name);
+  const serviceUuid = deviceConfig.serviceUuid;
+  const rxCharUuid = deviceConfig.rxCharUuid;
+  const { imageCharUuid, thermalCharUuid } = settingsRef.current.imgThermalUuid;
 
-    // 订阅 RX
-    notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
-      serviceUuid, rxCharUuid,
-      (error, characteristic) => {
-        if (error || !characteristic?.value) return;
-        const bytes = base64ToBytes(characteristic.value);
-        const logEntry = createLogEntry('RX', bytes, device.id);
-        addLog(logEntry);
-        rxBytesBufferRef.current += bytes.length;
-        if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
-          handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
-        }
-        resetDataTimeout();
+  // 根据设备名确定数据模式（仅用于初始值，运行时按字节自动判别）
+  dataModeRef.current = resolveDataMode(adapted.name);
+
+  setConnectedDevice(adapted);
+  setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: true } : d));
+  setStats(DEFAULT_STATS);
+  setParsedFields({});
+  ruleLastAlertRef.current = {};
+
+  // ================= 1. RX 订阅（自动分流） =================
+  notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
+    serviceUuid, rxCharUuid,
+    (error, characteristic) => {
+      if (error || !characteristic?.value) return;
+      const bytes = base64ToBytes(characteristic.value);
+      if (bytes.length === 0) return;
+
+      rxBytesBufferRef.current += bytes.length;
+      resetDataTimeout();
+
+          // ============ 自动判别数据格式 ============
+
+    // ---- 1. 图传（JPEG）----
+    const isJpegStart = bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xD8;
+    const isMidJpeg = imageBufferRef.current.length > 0;
+    if (isJpegStart || isMidJpeg) {
+      feedImageData(bytes);
+      if (isJpegStart) {
+        addLog(createLogEntry('RX', [0xFF, 0xD8], device.id));
       }
-    );
+      return;
+    }
 
-    // 订阅图传
-    connectedPlx.monitorCharacteristicForService(
-      serviceUuid, imageCharUuid,
-      (_err, characteristic) => {
-        if (!characteristic?.value) return;
-        const bytes = base64ToBytes(characteristic.value);
-        const chunk = parseImageChunk(bytes);
-        if (!chunk) return;
+    // ---- 2. 文本数据（可打印 ASCII）----
+    if (isPrintableAsciiPacket(bytes)) {
+      const logEntry = createLogEntry('RX', bytes, device.id);
+      addLog(logEntry);
+      if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) 
+        handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
+      return;
+    }
 
-        const prev = imageProgressRef.current;
-        const isNewTransfer = !prev || prev.totalChunks !== chunk.total;
-        const progress: ImageTransferProgress = isNewTransfer
-          ? createProgress(chunk.total)
-          : { ...prev, chunks: { ...prev.chunks } };
+    // ---- 3. 热相 （二进制）----
+    feedThermalData(bytes);
+    return;
+    }
+    
+  
+);
 
-        if (!progress.chunks[chunk.index]) {
-          progress.chunks[chunk.index] = chunk.payload;
-          progress.receivedChunks = Object.keys(progress.chunks).length;
-        }
-        imageProgressRef.current = progress;
-        setImageProgress({ ...progress });
-
-        if (progress.receivedChunks >= progress.totalChunks) {
-          const dataUri = mergeChunks(progress);
-          if (dataUri) {
-            const record = createImageRecord(genId(), dataUri, progress);
-            setImageHistory(prev => [record, ...prev].slice(0, MAX_IMAGE_HISTORY));
-          }
-          imageProgressRef.current = null;
-          setImageProgress(null);
-        }
-      }
-    );
-
-    // 订阅热相
+  // ================= 2. 热相订阅（独立特征，两种设备都订阅） =================
+  try {
     connectedPlx.monitorCharacteristicForService(
       serviceUuid, thermalCharUuid,
       (_err, characteristic) => {
         if (!characteristic?.value) return;
-        const bytes = base64ToBytes(characteristic.value);
-        const frame = parseThermalFrame(bytes);
-        if (!frame) return;
+        try {
+          const bytes = base64ToBytes(characteristic.value);
+          const frame = parseThermalFrame(bytes);
+          if (!frame) return;
 
-        const colormap = settingsRef.current.thermalColormap;
-        const pixels = renderThermalPixels(frame, colormap);
-        const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
+          const colormap = settingsRef.current.thermalColormap;
+          const pixels = renderThermalPixels(frame, colormap);
+          const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
 
-        setLatestThermalFrame(frame);
-        setLatestThermalDataUri(dataUri);
-        setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
-        updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
+          setLatestThermalFrame(frame);
+          setLatestThermalDataUri(dataUri);
+          setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
+          updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
+        } catch (e) {
+          console.log('热相数据处理错误:', e);
+        }
       }
     );
+  } catch (e) {
+    console.log('热相特征不存在，跳过:', e);
+  }
 
-    // 连接断开监听
-    disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
-      const dev = connectedDeviceRef.current;
-      const detail = error ? error.message : '连接意外断开';
-      const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
-      setAlerts(a => [alert, ...a].slice(0, 200));
-      maybeNotify(alert);
-      setConnectedDevice(null);
-      setConnectedDevices(prev => prev.filter(d => d.id !== device.id));
-      setActiveDeviceId(prev => {
-        const remaining = connectedDevicesRef.current.filter(d => d.id !== device.id);
-        return remaining.length > 0 ? remaining[0].id : null;
-      });
-      setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: false } : d));
-      setStats(DEFAULT_STATS);
-      stopAllTasks();
-    });
-
-    // RSSI 定时读取
-    rssiTimerRef.current = setInterval(async () => {
-      try {
-        const rssi = await connectedPlx.readRSSI();
-        const rssiVal = rssi.rssi ?? -100;
-        setConnectedDevice(prev => prev ? { ...prev, rssi: rssiVal } : prev);
-        setConnectedDevices(prev => prev.map(d => d.id === device.id ? { ...d, rssi: rssiVal } : d));
-        appendRssiHistory(rssiVal);
-
-        const now = Date.now();
-        if (rssiVal < settingsRef.current.rssiThreshold && now - lastRssiAlertRef.current > 60000) {
-          lastRssiAlertRef.current = now;
-          const dev = connectedDeviceRef.current;
-          if (dev) addAlert(createAlertEntry('RSSI_WEAK', { ...dev, rssi: rssiVal }, settingsRef.current));
+  // ================= 3. 图传独立特征订阅（如果 imageCharUuid 与 rxCharUuid 不同） =================
+  if (imageCharUuid && imageCharUuid.toLowerCase() !== rxCharUuid.toLowerCase()) {
+    try {
+      connectedPlx.monitorCharacteristicForService(
+        serviceUuid, imageCharUuid,
+        (_err, characteristic) => {
+          if (!characteristic?.value) return;
+          try {
+            const bytes = base64ToBytes(characteristic.value);
+            feedImageData(bytes);
+          } catch (e) {
+            console.log('图传特征处理错误:', e);
+          }
         }
-      } catch { /* 忽略 */ }
-    }, 2000);
+      );
+    } catch (e) {
+      console.log('图传特征不存在，跳过:', e);
+    }
+  }
 
-    // 速率统计
-    statsTimerRef.current = setInterval(() => {
-      const rx = rxBytesBufferRef.current;
-      const tx = txBytesBufferRef.current;
-      rxBytesBufferRef.current = 0;
-      txBytesBufferRef.current = 0;
-      setStats(prev => ({
-        ...prev,
-        rxRate: rx,
-        txRate: tx,
-        totalRxBytes: prev.totalRxBytes + rx,
-        totalTxBytes: prev.totalTxBytes + tx,
-      }));
-    }, 1000);
+  // ================= 4. 连接断开监听 =================
+  disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
+    const dev = connectedDeviceRef.current;
+    const detail = error ? error.message : '连接意外断开';
+    const alert = createAlertEntry('CONNECTION_LOST', dev, settingsRef.current, detail);
+    setAlerts(a => [alert, ...a].slice(0, 200));
+    maybeNotify(alert);
+    setConnectedDevice(null);
+    setConnectedDevices(prev => prev.filter(d => d.id !== device.id));
+    setActiveDeviceId(prev => {
+      const remaining = connectedDevicesRef.current.filter(d => d.id !== device.id);
+      return remaining.length > 0 ? remaining[0].id : null;
+    });
+    setDevices(prev => prev.map(d => d.id === device.id ? { ...d, isConnected: false } : d));
+    setStats(DEFAULT_STATS);
+    stopAllTasks();
+    // 清空图传缓冲
+    imageBufferRef.current = [];
+  });
 
-    resetDataTimeout();
-    return adapted;
-  }, [stopAllTasks, addLog, addAlert, appendRssiHistory, handleParsedFields,
-      resetDataTimeout, updateDeviceTempHistory, maybeNotify]);
+  // ================= 5. RSSI 定时读取 =================
+  rssiTimerRef.current = setInterval(async () => {
+    try {
+      const rssi = await connectedPlx.readRSSI();
+      const rssiVal = rssi.rssi ?? -100;
+      setConnectedDevice(prev => prev ? { ...prev, rssi: rssiVal } : prev);
+      setConnectedDevices(prev => prev.map(d => d.id === device.id ? { ...d, rssi: rssiVal } : d));
+      appendRssiHistory(rssiVal);
+
+      const now = Date.now();
+      if (rssiVal < settingsRef.current.rssiThreshold && now - lastRssiAlertRef.current > 60000) {
+        lastRssiAlertRef.current = now;
+        const dev = connectedDeviceRef.current;
+        if (dev) addAlert(createAlertEntry('RSSI_WEAK', { ...dev, rssi: rssiVal }, settingsRef.current));
+      }
+    } catch { /* 忽略 */ }
+  }, 2000);
+
+  // ================= 6. 速率统计 =================
+  statsTimerRef.current = setInterval(() => {
+    const rx = rxBytesBufferRef.current;
+    const tx = txBytesBufferRef.current;
+    rxBytesBufferRef.current = 0;
+    txBytesBufferRef.current = 0;
+    setStats(prev => ({
+      ...prev,
+      rxRate: rx,
+      txRate: tx,
+      totalRxBytes: prev.totalRxBytes + rx,
+      totalTxBytes: prev.totalTxBytes + tx,
+    }));
+  }, 1000);
+
+  resetDataTimeout();
+  return adapted;
+}, [
+  stopAllTasks, addLog, addAlert, appendRssiHistory, handleParsedFields,
+  resetDataTimeout, updateDeviceTempHistory, maybeNotify,
+  feedImageData,feedThermalData,
+]);
+
 
   // ============ 连接主设备（第一个设备） ============
   const connectDevice = useCallback(async (device: BleDevice) => {
@@ -625,12 +939,15 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       await connectedPlx.discoverAllServicesAndCharacteristics();
       const adapted = adaptDevice(connectedPlx, true);
 
-      const { serviceUuid } = settingsRef.current.bleUuid;
+      const deviceConfig = resolveBleConfigOrDefault(adapted.name);
+      const serviceUuid = deviceConfig.serviceUuid;
       const { thermalCharUuid } = settingsRef.current.imgThermalUuid;
       const subs: Subscription[] = [];
 
       // 仅订阅热相（副设备温度监测）
-      const thermalSub = connectedPlx.monitorCharacteristicForService(
+      let thermalSub: Subscription | null = null;
+       try {
+        thermalSub = connectedPlx.monitorCharacteristicForService(
         serviceUuid, thermalCharUuid,
         (_err, characteristic) => {
           if (!characteristic?.value) return;
@@ -640,7 +957,11 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
           updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
         }
       );
-      subs.push(thermalSub);
+      } catch (e)
+      {
+       console.log('副设备热相特征不存在，跳过:', e);
+      }
+      if (thermalSub) subs.push(thermalSub);
 
       // 断开监听
       const discSub = connectedPlx.onDisconnected(() => {
@@ -750,8 +1071,10 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     if (bytes.length === 0) return;
 
     const b64 = bytesToBase64(bytes);
-    const { txCharUuid, serviceUuid } = settingsRef.current.bleUuid;
-
+    const deviceConfig = resolveBleConfigOrDefault(dev.name);
+    const serviceUuid = deviceConfig.serviceUuid;
+    const txCharUuid = deviceConfig.txCharUuid;
+    
     try {
       await bleManager.writeCharacteristicWithoutResponseForDevice(dev.id, serviceUuid, txCharUuid, b64);
       const entry = createLogEntry('TX', bytes, dev.id);
@@ -884,6 +1207,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       imageHistory,
       imageProgress,
       clearImageHistory,
+      latestImageDataUri,
+      imageStreamMode,
+      setImageStreamMode,
       // 热相
       thermalFrames,
       latestThermalFrame,

@@ -11,6 +11,7 @@
         "buildType":"apk"
       },
       "env":{
+        "NPM_CLI":"install",
         "API_URL":"http://localhost:3000"
       }
     },
