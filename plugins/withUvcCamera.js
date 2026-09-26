@@ -114,62 +114,42 @@ function withLocalProperties(config) {
     'android',
     async (config) => {
       const projectRoot = config.modRequest.platformProjectRoot;
+      const sdkNdkDir = '/opt/android/sdk/ndk';
+      const targetNdkDir = path.join(sdkNdkDir, '14.1.3816874');
 
-      // ============ 1. 下载并解压 NDK r14b ============
-      const ndkVersion = 'android-ndk-r14b';
-      const ndkBaseDir = path.join(projectRoot, 'ndk');
-      const ndkDir = path.join(ndkBaseDir, ndkVersion);
-      const ndkZip = path.join(ndkBaseDir, `${ndkVersion}.zip`);
-
-      if (!fs.existsSync(ndkDir)) {
-        fs.mkdirSync(ndkBaseDir, { recursive: true });
-
-        // 国内镜像优先，失败则回退到官方
+      // ---- 下载并解压 NDK r14b 到 SDK 的 ndk 目录 ----
+      if (!fs.existsSync(targetNdkDir)) {
+        fs.mkdirSync(sdkNdkDir, { recursive: true });
+        const zipPath = path.join(projectRoot, 'ndk-r14b.zip');
         const mirrors = [
           'http://mirrors.flysnow.org/android/ndk/android-ndk-r14b-linux-x86_64.zip',
           'http://mirrors.neusoft.edu.cn/android/repository/android-ndk-r14b-linux-x86_64.zip',
-          'https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip',
         ];
-
-        let downloaded = false;
+        let ok = false;
         for (const url of mirrors) {
           try {
-            console.log(`[withUvcCamera] 尝试下载 NDK: ${url}`);
-            execSync(`curl -L --connect-timeout 30 --max-time 600 -o "${ndkZip}" "${url}"`, {
-              stdio: 'inherit',
-            });
-            downloaded = true;
-            break;
-          } catch (e) {
-            console.warn(`[withUvcCamera] 下载失败，尝试下一个镜像: ${e.message}`);
-          }
+            execSync(`curl -L --connect-timeout 30 --max-time 600 -o "${zipPath}" "${url}"`, { stdio: 'inherit' });
+            ok = true; break;
+          } catch (e) { console.warn(`下载失败: ${e.message}`); }
         }
-
-        if (!downloaded) {
-          throw new Error('[withUvcCamera] 所有镜像下载 NDK r14b 均失败');
-        }
-
-        console.log('[withUvcCamera] 正在解压 NDK r14b...');
-        execSync(`unzip -q "${ndkZip}" -d "${ndkBaseDir}"`, { stdio: 'inherit' });
-        fs.unlinkSync(ndkZip);
-        console.log(`[withUvcCamera] NDK 解压完成: ${ndkDir}`);
-      } else {
-        console.log(`[withUvcCamera] NDK 已存在，跳过下载: ${ndkDir}`);
+        if (!ok) throw new Error('NDK r14b 下载失败');
+        execSync(`unzip -q "${zipPath}" -d "${sdkNdkDir}"`, { stdio: 'inherit' });
+        fs.renameSync(path.join(sdkNdkDir, 'android-ndk-r14b'), targetNdkDir);
+        fs.unlinkSync(zipPath);
       }
 
-      // ============ 2. 写 local.properties ============
-      const localPropertiesPath = path.join(projectRoot, 'local.properties');
-      const contents = `sdk.dir=/opt/android/sdk
-ndk.dir=${ndkDir}
-uvccamera.ndk.dir=${ndkDir}
-`;
-      fs.writeFileSync(localPropertiesPath, contents);
-      console.log(`[withUvcCamera] 已生成 local.properties: ndk.dir=${ndkDir}`);
+      // ---- 写 local.properties（只写 sdk.dir）----
+      fs.writeFileSync(
+        path.join(projectRoot, 'local.properties'),
+        `sdk.dir=/opt/android/sdk\n`
+      );
+      console.log('[withUvcCamera] NDK 已就位，local.properties 已生成');
 
       return config;
     },
   ]);
 }
+
 
 
 // ---- 6. 为 libuvccamera 单独指定 NDK 版本 ----
