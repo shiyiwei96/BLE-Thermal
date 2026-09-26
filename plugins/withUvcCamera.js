@@ -108,42 +108,49 @@ project(':libuvccamera').projectDir = new File(rootProject.projectDir, '../node_
 }
 
 
-// ---- 5. 创建 local.properties（含 NDK r14b 自动下载）----
+// ---- 5. 下载 NDK r14b 到项目内 + 写 local.properties ----
 function withLocalProperties(config) {
   return withDangerousMod(config, [
     'android',
     async (config) => {
       const projectRoot = config.modRequest.platformProjectRoot;
-      const sdkNdkDir = '/opt/android/sdk/ndk';
-      const targetNdkDir = path.join(sdkNdkDir, '14.1.3816874');
+      const ndkBaseDir = path.join(projectRoot, 'ndk');          // android/ndk
+      const ndkDir = path.join(ndkBaseDir, 'android-ndk-r14b');
+      const zipPath = path.join(ndkBaseDir, 'ndk-r14b.zip');
 
-      // ---- 下载并解压 NDK r14b 到 SDK 的 ndk 目录 ----
-      if (!fs.existsSync(targetNdkDir)) {
-        fs.mkdirSync(sdkNdkDir, { recursive: true });
-        const zipPath = path.join(projectRoot, 'ndk-r14b.zip');
+      if (!fs.existsSync(ndkDir)) {
+        fs.mkdirSync(ndkBaseDir, { recursive: true });
+
         const mirrors = [
           'http://mirrors.flysnow.org/android/ndk/android-ndk-r14b-linux-x86_64.zip',
           'http://mirrors.neusoft.edu.cn/android/repository/android-ndk-r14b-linux-x86_64.zip',
+          'https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip',
         ];
+
         let ok = false;
         for (const url of mirrors) {
           try {
+            console.log(`[withUvcCamera] 下载 NDK: ${url}`);
             execSync(`curl -L --connect-timeout 30 --max-time 600 -o "${zipPath}" "${url}"`, { stdio: 'inherit' });
-            ok = true; break;
-          } catch (e) { console.warn(`下载失败: ${e.message}`); }
+            ok = true;
+            break;
+          } catch (e) {
+            console.warn(`[withUvcCamera] 镜像失败: ${e.message}`);
+          }
         }
-        if (!ok) throw new Error('NDK r14b 下载失败');
-        execSync(`unzip -q "${zipPath}" -d "${sdkNdkDir}"`, { stdio: 'inherit' });
-        fs.renameSync(path.join(sdkNdkDir, 'android-ndk-r14b'), targetNdkDir);
+        if (!ok) throw new Error('[withUvcCamera] NDK r14b 下载失败');
+
+        console.log('[withUvcCamera] 解压 NDK...');
+        execSync(`unzip -q "${zipPath}" -d "${ndkBaseDir}"`, { stdio: 'inherit' });
         fs.unlinkSync(zipPath);
       }
 
-      // ---- 写 local.properties（只写 sdk.dir）----
+      // local.properties 只写 sdk.dir，不写 ndk.dir
       fs.writeFileSync(
         path.join(projectRoot, 'local.properties'),
         `sdk.dir=/opt/android/sdk\n`
       );
-      console.log('[withUvcCamera] NDK 已就位，local.properties 已生成');
+      console.log(`[withUvcCamera] NDK 就位: ${ndkDir}`);
 
       return config;
     },
@@ -152,7 +159,7 @@ function withLocalProperties(config) {
 
 
 
-// ---- 6. 为 libuvccamera 单独指定 NDK 版本 ----
+// ---- 6. 为 libuvccamera 指定 ndkPath ----
 function withLibuvccameraNdkVersion(config) {
   return withDangerousMod(config, [
     'android',
@@ -161,39 +168,32 @@ function withLibuvccameraNdkVersion(config) {
         config.modRequest.projectRoot,
         'node_modules/react-native-uvc-camera/libuvccamera/build.gradle'
       );
-
-      // 文件不存在就跳过（可能未安装该库）
       if (!fs.existsSync(gradlePath)) {
-        console.log('[withUvcCamera] 未找到 libuvccamera/build.gradle，跳过');
+        console.log('[withUvcCamera] 未找到 libuvccamera/build.gradle');
         return config;
       }
 
       let contents = fs.readFileSync(gradlePath, 'utf-8');
-
-      // 已设置过就不重复插入
-      if (contents.includes('ndkVersion')) {
-        console.log('[withUvcCamera] libuvccamera 已设置 ndkVersion，跳过');
+      if (contents.includes('ndkPath')) {
+        console.log('[withUvcCamera] libuvccamera 已有 ndkPath，跳过');
         return config;
       }
 
-      // 在第一个 android { 块内插入 ndkVersion
-      const ndkVersion = '14.1.3816874'; // NDK r14b 的版本号
-      const insertRegex = /(android\s*\{)/;
-      if (insertRegex.test(contents)) {
-        contents = contents.replace(
-          insertRegex,
-          `$1\n    ndkVersion "${ndkVersion}"\n`
-        );
-        fs.writeFileSync(gradlePath, contents);
-        console.log(`[withUvcCamera] 已为 libuvccamera 设置 ndkVersion ${ndkVersion}`);
-      } else {
-        console.warn('[withUvcCamera] 未在 build.gradle 中找到 android { 块');
-      }
+      // 用 ndkPath 指向项目内的 NDK，绝对路径
+      const ndkPath = '/home/expo/workingdir/build/android/ndk/android-ndk-r14b';
 
+      contents = contents.replace(
+        /(android\s*\{)/,
+        `$1\n    ndkPath "${ndkPath}"\n`
+      );
+      fs.writeFileSync(gradlePath, contents);
+      console.log(`[withUvcCamera] 已为 libuvccamera 设置 ndkPath: ${ndkPath}`);
       return config;
     },
   ]);
 }
+
+
 
 module.exports = function withUvcCamera(config) {
   config = withUvcManifest(config);
