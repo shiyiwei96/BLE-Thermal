@@ -114,43 +114,39 @@ function withLocalProperties(config) {
     'android',
     async (config) => {
       const projectRoot = config.modRequest.platformProjectRoot;
-      const ndkBaseDir = path.join(projectRoot, 'ndk');          // android/ndk
+      const ndkBaseDir = path.join(projectRoot, 'ndk');
       const ndkDir = path.join(ndkBaseDir, 'android-ndk-r14b');
       const zipPath = path.join(ndkBaseDir, 'ndk-r14b.zip');
 
       if (!fs.existsSync(ndkDir)) {
         fs.mkdirSync(ndkBaseDir, { recursive: true });
-
         const mirrors = [
           'http://mirrors.flysnow.org/android/ndk/android-ndk-r14b-linux-x86_64.zip',
           'http://mirrors.neusoft.edu.cn/android/repository/android-ndk-r14b-linux-x86_64.zip',
           'https://dl.google.com/android/repository/android-ndk-r14b-linux-x86_64.zip',
         ];
-
         let ok = false;
         for (const url of mirrors) {
           try {
-            console.log(`[withUvcCamera] 下载 NDK: ${url}`);
             execSync(`curl -L --connect-timeout 30 --max-time 600 -o "${zipPath}" "${url}"`, { stdio: 'inherit' });
-            ok = true;
-            break;
-          } catch (e) {
-            console.warn(`[withUvcCamera] 镜像失败: ${e.message}`);
-          }
+            ok = true; break;
+          } catch (e) { console.warn(`镜像失败: ${e.message}`); }
         }
-        if (!ok) throw new Error('[withUvcCamera] NDK r14b 下载失败');
-
-        console.log('[withUvcCamera] 解压 NDK...');
+        if (!ok) throw new Error('NDK r14b 下载失败');
         execSync(`unzip -q "${zipPath}" -d "${ndkBaseDir}"`, { stdio: 'inherit' });
         fs.unlinkSync(zipPath);
       }
 
-      // local.properties 只写 sdk.dir，不写 ndk.dir
+      // 动态获取 SDK 路径（从环境变量）
+      const sdkDir = process.env.ANDROID_HOME
+        || process.env.ANDROID_SDK_ROOT
+        || '/opt/android/sdk';
+
       fs.writeFileSync(
         path.join(projectRoot, 'local.properties'),
-        `sdk.dir=/opt/android/sdk\n`
+        `sdk.dir=${sdkDir}\n`
       );
-      console.log(`[withUvcCamera] NDK 就位: ${ndkDir}`);
+      console.log(`[withUvcCamera] local.properties sdk.dir=${sdkDir}, ndk=${ndkDir}`);
 
       return config;
     },
@@ -174,20 +170,29 @@ function withLibuvccameraNdkVersion(config) {
       }
 
       let contents = fs.readFileSync(gradlePath, 'utf-8');
-      if (contents.includes('ndkPath')) {
-        console.log('[withUvcCamera] libuvccamera 已有 ndkPath，跳过');
-        return config;
-      }
-
-      // 用 ndkPath 指向项目内的 NDK，绝对路径
       const ndkPath = '/home/expo/workingdir/build/android/ndk/android-ndk-r14b';
 
+      // (1) 设置 ndkPath 属性
+      if (!contents.includes('ndkPath')) {
+        contents = contents.replace(
+          /(android\s*\{)/,
+          `$1\n    ndkPath "${ndkPath}"\n`
+        );
+      }
+
+      // (2) 强制覆盖 ndkBuildingDir 的定义
+      // 匹配：def ndkBuildingDir = ...（直到行尾）
       contents = contents.replace(
-        /(android\s*\{)/,
-        `$1\n    ndkPath "${ndkPath}"\n`
+        /def\s+ndkBuildingDir\s*=\s*[^\n]+/g,
+        `def ndkBuildingDir = "${ndkPath}"`
       );
+
+      // (3) 兜底：任何引用 android.ndkDirectory 的地方
+      contents = contents.replace(/project\.android\.ndkDirectory/g, `"${ndkPath}"`);
+      contents = contents.replace(/android\.ndkDirectory/g, `"${ndkPath}"`);
+
       fs.writeFileSync(gradlePath, contents);
-      console.log(`[withUvcCamera] 已为 libuvccamera 设置 ndkPath: ${ndkPath}`);
+      console.log(`[withUvcCamera] 已修复 libuvccamera ndk-building 路径: ${ndkPath}`);
       return config;
     },
   ]);
