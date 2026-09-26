@@ -1,0 +1,6 @@
+#!/bin/bash
+if [[ "$EAS_BUILD_PLATFORM" == "android" ]]; then
+  echo "Installing libncurses5..."
+  sudo apt-get --quiet update --yes
+  sudo apt-get --quiet install --yes libncurses5
+fi
