@@ -9,6 +9,9 @@ import { SerialProvider } from '@/lib/serialContext';
 import { ConnectionModeProvider } from '@/lib/connectionMode';
 import "../global.css";
 
+
+
+
 Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
 });

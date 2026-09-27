@@ -3,6 +3,7 @@
  * 使用 react-native-usb-serialport-for-android 实现
  * 仅支持 Android - iOS 显示不支持提示
  */
+import { parseThermalBytes, renderThermalFrame, THERMAL_DATA_BYTES } from './thermalParser';
 import React, {
   createContext,
   useCallback,
@@ -21,6 +22,8 @@ import type {
   ParsedFieldState,
   SerialConfig,
   SerialDevice,
+  ThermalFrame,
+  ThermalColormap, 
 } from './types';
 import { DEFAULT_SERIAL_CONFIG } from './types';
 import {
@@ -68,6 +71,11 @@ export interface SerialContextType {
   serialStats: DataStats;
   serialParsedFields: Record<string, ParsedFieldState>;
 
+  latestThermalFrame: ThermalFrame | null;
+  latestThermalDataUri: string | null;
+  thermalFrames: ThermalFrame[];
+  isConnected: boolean;   // 加一个方便热相页判断
+
   // 操作
   discoverDevices: () => Promise<void>;
   connectSerial: (device: SerialDevice, config: SerialConfig) => Promise<void>;
@@ -100,6 +108,17 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
   const [serialStats, setSerialStats] = useState<DataStats>(DEFAULT_STATS);
   const [serialParsedFields, setSerialParsedFields] = useState<Record<string, ParsedFieldState>>({});
   const [alertRules, setAlertRules] = useState(settings.dataAlertRules ?? DEFAULT_ALERT_RULES);
+  
+  // ===== 热相数据 =====
+const [latestThermalFrame, setLatestThermalFrame] = useState<ThermalFrame | null>(null);
+const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(null);
+const [thermalFrames, setThermalFrames] = useState<ThermalFrame[]>([]);
+
+const thermalBufferRef = useRef<number[]>([]);
+const thermalModeRef = useRef<'unknown' | 'withHeader' | 'noHeader' | 'data'>('unknown');
+const thermalLastRenderRef = useRef(0);
+const thermalPendingRef = useRef<ThermalFrame | null>(null);
+const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // refs
   const usbSerialRef = useRef<import('react-native-usb-serialport-for-android').UsbSerial | null>(null);
@@ -191,6 +210,111 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
     }
   }, []);
 
+
+  // ===== 热相帧渲染（节流 10fps）=====
+const renderThermalNow = useCallback((frame: ThermalFrame) => {
+  const colormap = (settingsRef.current.thermalColormap ?? 'iron') as ThermalColormap;
+  const uri = renderThermalFrame(frame, colormap);
+  setLatestThermalFrame(frame);
+  setLatestThermalDataUri(uri);
+  setThermalFrames(prev => [frame, ...prev].slice(0, 100));
+}, []);
+
+const handleThermalFrame = useCallback((tempBytes: number[]) => {
+  // 带帧头 → -40；无帧头 → 0
+  const offset = thermalModeRef.current === 'withHeader' ? -40 : 0;
+  const frame = parseThermalBytes(tempBytes, offset);
+  
+  if (!frame) return;
+
+  thermalPendingRef.current = frame;
+  const now = Date.now();
+  const INTERVAL = 100;
+
+  if (now - thermalLastRenderRef.current >= INTERVAL) {
+    thermalLastRenderRef.current = now;
+    renderThermalNow(frame);
+    thermalPendingRef.current = null;
+  } else if (!thermalTimerRef.current) {
+    thermalTimerRef.current = setTimeout(() => {
+      thermalTimerRef.current = null;
+      if (thermalPendingRef.current) {
+        thermalLastRenderRef.current = Date.now();
+        renderThermalNow(thermalPendingRef.current);
+        thermalPendingRef.current = null;
+      }
+    }, INTERVAL - (now - thermalLastRenderRef.current));
+  }
+}, [renderThermalNow]);
+
+// ===== 热相数据分流（自动探测格式）=====
+const feedThermalData = useCallback((bytes: number[]): boolean => {
+  const buf = thermalBufferRef.current;
+  buf.push(...bytes);
+
+  // 首次探测：判断是不是热相数据
+  if (thermalModeRef.current === 'unknown' && buf.length >= 4) {
+    if (buf[0] === 0x5A && buf[1] === 0x06 && buf[2] === 0x02 && buf[3] === 0x00) {
+      thermalModeRef.current = 'withHeader';
+      console.log('[Serial热相] 探测到带帧头模式');
+    } else if (
+      // 温度合理范围粗筛：int16 值应该在 0~10000（即 0~100℃ * 100）之间
+      // 拿前 4 字节试读，若都在合理范围则判为热相
+      (() => {
+        const v0 = (buf[0] | (buf[1] << 8));
+        const v1 = (buf[2] | (buf[3] << 8));
+        return v0 > 0 && v0 < 10000 && v1 > 0 && v1 < 10000;
+      })()
+    ) {
+      thermalModeRef.current = 'noHeader';
+      console.log('[Serial热相] 探测到无帧头模式（裸 int16）');
+    } else {
+      thermalModeRef.current = 'data';
+      console.log('[Serial热相] 探测到普通数据模式');
+    }
+  }
+
+  if (thermalModeRef.current === 'data') return false; // 交给普通数据流程
+
+  // ---- 无帧头：定长 1536 切分 ----
+  if (thermalModeRef.current === 'noHeader') {
+    while (buf.length >= THERMAL_DATA_BYTES) {
+      const frameBytes = buf.slice(0, THERMAL_DATA_BYTES);
+      buf.splice(0, THERMAL_DATA_BYTES);
+      handleThermalFrame(frameBytes);
+    }
+    if (buf.length > THERMAL_DATA_BYTES * 4) buf.length = 0;
+    return true;
+  }
+
+  // ---- 带帧头：找 5A 06 02 00 ----
+  if (thermalModeRef.current === 'withHeader') {
+    while (true) {
+      let idx = -1;
+      for (let i = 0; i <= buf.length - 4; i++) {
+        if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+          idx = i; break;
+        }
+      }
+      if (idx < 0) {
+        if (buf.length > 3) { const k = buf.slice(-3); buf.length = 0; buf.push(...k); }
+        break;
+      }
+      if (idx > 0) buf.splice(0, idx);
+      if (buf.length < 4 + THERMAL_DATA_BYTES) break;
+      const tempBytes = buf.slice(4, 4 + THERMAL_DATA_BYTES);
+      buf.splice(0, 4 + THERMAL_DATA_BYTES);
+      handleThermalFrame(tempBytes);
+    }
+    if (buf.length > THERMAL_DATA_BYTES * 4) buf.length = 0;
+    return true;
+  }
+// ---- 未知模式 ---
+  return false;
+}, [handleThermalFrame]);
+
+
+
   // ============ 连接串口设备 ============
   const connectSerial = useCallback(async (device: SerialDevice, config: SerialConfig) => {
     if (!isSerialSupported) {
@@ -229,18 +353,27 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
       setSerialParsedFields({});
       ruleLastAlertRef.current = {};
 
-      // 订阅数据接收
-      rxListenerRef.current = serial.onReceived(event => {
-        const bytes = hexDataToBytes(event.data);
-        if (bytes.length === 0) return;
-        const entry = createSerialLogEntry('RX', bytes, device.deviceId.toString());
-        setSerialLogs(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES));
-        rxBytesBuffer.current += bytes.length;
-        if (entry.parsedFields && Object.keys(entry.parsedFields).length > 0) {
-          handleParsedFields(entry.parsedFields);
-        }
-        resetDataTimeout();
-      });
+      // 订阅数据接收（自动分流：热相 / 普通数据）
+ rxListenerRef.current = serial.onReceived(event => {
+  const bytes = hexDataToBytes(event.data);
+  if (bytes.length === 0) return;
+
+  rxBytesBuffer.current += bytes.length;
+  resetDataTimeout();
+
+  // ---- 1. 热相优先（feedThermalData 返回 true 表示已消费）----
+  if (feedThermalData(bytes)) {
+    return;
+  }
+
+  // ---- 2. 普通数据 ----
+  const entry = createSerialLogEntry('RX', bytes, device.deviceId.toString());
+  setSerialLogs(prev => [entry, ...prev].slice(0, MAX_LOG_ENTRIES));
+  if (entry.parsedFields && Object.keys(entry.parsedFields).length > 0) {
+    handleParsedFields(entry.parsedFields);
+  }
+});
+
 
       // 速率统计（每1秒）
       statsTimerRef.current = setInterval(() => {
@@ -284,6 +417,13 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
     setConnectedSerial(null);
     setSerialDevices(prev => prev.map(d => ({ ...d, isConnected: false })));
     setSerialStats(DEFAULT_STATS);
+    thermalModeRef.current = 'unknown';
+    thermalBufferRef.current = [];
+    thermalPendingRef.current = null;
+    if (thermalTimerRef.current) {
+      clearTimeout(thermalTimerRef.current);
+      thermalTimerRef.current = null;
+    }
   }, [stopAllTasks]);
 
   // ============ 发送数据 ============
@@ -348,6 +488,10 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
     updateSerialAlertRule,
     deleteSerialAlertRule,
     addSerialAlertRule,
+    latestThermalFrame,
+    latestThermalDataUri,
+    thermalFrames,
+    isConnected: connectedSerial !== null,
   };
 
   return <SerialContext.Provider value={value}>{children}</SerialContext.Provider>;

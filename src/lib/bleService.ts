@@ -75,13 +75,12 @@ export function adaptDevice(device: BleDevice_PLX, connected = false): BleDevice
 }
 
 // ============ Base64 与字节数组互转 ============
-export function base64ToBytes(base64: string): number[] {
-  const binaryStr = atob(base64);
-  const bytes: number[] = [];
-  for (let i = 0; i < binaryStr.length; i++) {
-    bytes.push(binaryStr.charCodeAt(i));
-  }
-  return bytes;
+export function base64ToBytes(b64: string): number[] {
+  const bin = atob(b64);
+  const len = bin.length;
+  const arr = new Array(len);
+  for (let i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
 }
 
 export function bytesToBase64(bytes: number[]): string {

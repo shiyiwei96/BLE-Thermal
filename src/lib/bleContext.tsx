@@ -67,21 +67,21 @@ const THERMAL_DATA_BYTES = THERMAL_W * THERMAL_H * 2;  // 1536
 const THERMAL_HEADER_LEN = 4;
 const THERMAL_TAIL_LEN = 2;                              // 校验
 const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL_LEN; // 1542
-const THERMAL_OFFSET = -40;
+//const THERMAL_OFFSET = -40;
 
 /**
  * 解析 32×24 int16 温度矩阵（1536 字节）为 ThermalFrame
  * 协议：帧头 5A 06 02 00 + 1536B int16 小端 + 2B 校验
  * 温度公式：raw / 100 - 40
  */
-function parseThermalInt16(bytes: number[]): ThermalFrame | null {
+function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | null {
   if (bytes.length < THERMAL_DATA_BYTES) return null;
 
   const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
   const raw: number[] = new Array(THERMAL_W * THERMAL_H);
 
   for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
-    const v = view.getInt16(i * 2, true) / 100 + THERMAL_OFFSET;
+    const v = view.getInt16(i * 2, true) / 100 + offset;
     raw[i] = v;
   }
 
@@ -239,7 +239,7 @@ const imagePendingFrameRef = useRef<string | null>(null);
 const dataModeRef = useRef<DeviceDataMode>('DATA');
 // ===== 热相缓冲区 =====
 const thermalBufferRef = useRef<number[]>([]);
-
+const thermalModeRef = useRef<'unknown' | 'withHeader' | 'noHeader'>('unknown');
 
 // ============ BleProvider ============
 export function BleProvider({ children }: { children: React.ReactNode }) {
@@ -622,6 +622,8 @@ const feedImageData = useCallback((bytes: number[]) => {
   }
 }, [handleImageFrame]);
 
+
+
 // 热相渲染节流
 const thermalLastRenderRef = useRef<number>(0);
 const thermalPendingRef = useRef<ThermalFrame | null>(null);
@@ -638,11 +640,16 @@ const renderThermalNow = useCallback((frame: ThermalFrame) => {
   updateDeviceTempHistory('primary', frame.maxTemp, frame.minTemp, frame.avgTemp);
 }, [updateDeviceTempHistory]);
 
+
+
 const handleThermalFrame = useCallback((tempBytes: number[]) => {
   try {
-    const frame = parseThermalInt16(tempBytes);
-    if (!frame) return;
+    // 带帧头 → -40；无帧头 → 0
+    const offset = thermalModeRef.current === 'withHeader' ? -40 : 0;
 
+    const frame = parseThermalInt16(tempBytes,offset);
+    if (!frame) return;
+    
     thermalPendingRef.current = frame;
     const now = Date.now();
     const INTERVAL = 100; // 10fps
@@ -667,54 +674,60 @@ const handleThermalFrame = useCallback((tempBytes: number[]) => {
 }, [renderThermalNow]);
 
 
+
 // ============ 热相数据切分（帧头 5A 06 02 00） ============
-const feedThermalData = useCallback((bytes: number[]) => {
+const feedThermalData = useCallback((bytes: number[]): boolean => {
   const buf = thermalBufferRef.current;
   buf.push(...bytes);
 
-  while (true) {
-    // 找帧头 5A 06 02 00
-    let headerIdx = -1;
-    for (let i = 0; i <= buf.length - 4; i++) {
-      if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
-        headerIdx = i;
-        break;
-      }
+  // 首次探测模式
+  if (thermalModeRef.current === 'unknown' && buf.length >= 4) {
+    if (buf[0] === 0x5A && buf[1] === 0x06 && buf[2] === 0x02 && buf[3] === 0x00) {
+      thermalModeRef.current = 'withHeader';
+      console.log('[热相] 探测到带帧头模式');
+    } else {
+      thermalModeRef.current = 'noHeader';
+      console.log('[热相] 探测到无帧头模式');
     }
-    if (headerIdx < 0) {
-      if (buf.length > 3) {
-        const keep = buf.slice(-3);
-        buf.length = 0;
-        buf.push(...keep);
-      }
-      break;
-    }
-    if (headerIdx > 0) buf.splice(0, headerIdx);
-
-    // 数据不够一帧，等下一包
-    if (buf.length < 4 + THERMAL_DATA_BYTES) break;
-
-    // 提取 1536 字节温度数据
-    const tempBytes = buf.slice(4, 4 + THERMAL_DATA_BYTES);
-    buf.splice(0, 4 + THERMAL_DATA_BYTES);
-
-    // 丢弃到下一个帧头之间的字节（校验/垃圾，长度不固定）
-    let nextHeaderIdx = -1;
-    for (let i = 0; i <= buf.length - 4; i++) {
-      if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
-        nextHeaderIdx = i;
-        break;
-      }
-    }
-    if (nextHeaderIdx > 0) buf.splice(0, nextHeaderIdx);
-
-    handleThermalFrame(tempBytes);
   }
 
-  if (buf.length > THERMAL_DATA_BYTES * 4) {
-    console.warn('热相缓冲区溢出，清空');
-    buf.length = 0;
+  // ---- 无帧头模式 ----
+  if (thermalModeRef.current === 'noHeader') {
+    const NEED = THERMAL_W * THERMAL_H * 2;
+    while (buf.length >= NEED) {
+      const frameBytes = buf.slice(0, NEED);
+      buf.splice(0, NEED);
+      handleThermalFrame(frameBytes);
+    }
+    if (buf.length > NEED * 4) buf.length = 0;
+    return true;   // ✅ 已消费
   }
+
+  // ---- 带帧头模式 ----
+  if (thermalModeRef.current === 'withHeader') {
+    while (true) {
+      let idx = -1;
+      for (let i = 0; i <= buf.length - 4; i++) {
+        if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+          idx = i; break;
+        }
+      }
+      if (idx < 0) {
+        if (buf.length > 3) { const k = buf.slice(-3); buf.length = 0; buf.push(...k); }
+        break;
+      }
+      if (idx > 0) buf.splice(0, idx);
+      if (buf.length < 4 + THERMAL_DATA_BYTES) break;
+      const tempBytes = buf.slice(4, 4 + THERMAL_DATA_BYTES);
+      buf.splice(0, 4 + THERMAL_DATA_BYTES);
+      handleThermalFrame(tempBytes);
+    }
+    if (buf.length > THERMAL_DATA_BYTES * 4) buf.length = 0;
+    return true;   // ✅ 已消费
+  }
+
+  // ---- 未知模式 ----
+  return false;    // 未消费
 }, [handleThermalFrame]);
 
 
@@ -745,20 +758,19 @@ const feedThermalData = useCallback((bytes: number[]) => {
   setParsedFields({});
   ruleLastAlertRef.current = {};
 
-  // ================= 1. RX 订阅（自动分流） =================
-  notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
-    serviceUuid, rxCharUuid,
-    (error, characteristic) => {
-      if (error || !characteristic?.value) return;
-      const bytes = base64ToBytes(characteristic.value);
-      if (bytes.length === 0) return;
+  // ================= RX 订阅（自动分流：图传 / 热相 / 普通数据）=================
+notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
+  serviceUuid, rxCharUuid,
+  (error, characteristic) => {
+    if (error || !characteristic?.value) return;
 
-      rxBytesBufferRef.current += bytes.length;
-      resetDataTimeout();
+    const bytes = base64ToBytes(characteristic.value);
+    if (bytes.length === 0) return;
 
-          // ============ 自动判别数据格式 ============
+    rxBytesBufferRef.current += bytes.length;
+    resetDataTimeout();
 
-    // ---- 1. 图传（JPEG）----
+    // ---- 1. 图传优先（JPEG 头 FF D8，或图传缓冲非空）----
     const isJpegStart = bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xD8;
     const isMidJpeg = imageBufferRef.current.length > 0;
     if (isJpegStart || isMidJpeg) {
@@ -769,70 +781,20 @@ const feedThermalData = useCallback((bytes: number[]) => {
       return;
     }
 
-    // ---- 2. 文本数据（可打印 ASCII）----
-    if (isPrintableAsciiPacket(bytes)) {
-      const logEntry = createLogEntry('RX', bytes, device.id);
-      addLog(logEntry);
-      if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) 
-        handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
+    // ---- 2. 热相（feedThermalData 返回 true 表示已消费）----
+    if (feedThermalData(bytes)) {
       return;
     }
 
-    // ---- 3. 热相 （二进制）----
-    feedThermalData(bytes);
-    return;
+    // ---- 3. 普通数据 ----
+    const logEntry = createLogEntry('RX', bytes, device.id);
+    addLog(logEntry);
+    if (logEntry.parsedFields && Object.keys(logEntry.parsedFields).length > 0) {
+      handleParsedFields(logEntry.parsedFields, connectedDeviceRef.current);
     }
-    
-  
+  }
 );
 
-  // ================= 2. 热相订阅（独立特征，两种设备都订阅） =================
-  try {
-    connectedPlx.monitorCharacteristicForService(
-      serviceUuid, thermalCharUuid,
-      (_err, characteristic) => {
-        if (!characteristic?.value) return;
-        try {
-          const bytes = base64ToBytes(characteristic.value);
-          const frame = parseThermalFrame(bytes);
-          if (!frame) return;
-
-          const colormap = settingsRef.current.thermalColormap;
-          const pixels = renderThermalPixels(frame, colormap);
-          const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
-
-          setLatestThermalFrame(frame);
-          setLatestThermalDataUri(dataUri);
-          setThermalFrames(prev => [frame, ...prev].slice(0, MAX_THERMAL_HISTORY));
-          updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
-        } catch (e) {
-          console.log('热相数据处理错误:', e);
-        }
-      }
-    );
-  } catch (e) {
-    console.log('热相特征不存在，跳过:', e);
-  }
-
-  // ================= 3. 图传独立特征订阅（如果 imageCharUuid 与 rxCharUuid 不同） =================
-  if (imageCharUuid && imageCharUuid.toLowerCase() !== rxCharUuid.toLowerCase()) {
-    try {
-      connectedPlx.monitorCharacteristicForService(
-        serviceUuid, imageCharUuid,
-        (_err, characteristic) => {
-          if (!characteristic?.value) return;
-          try {
-            const bytes = base64ToBytes(characteristic.value);
-            feedImageData(bytes);
-          } catch (e) {
-            console.log('图传特征处理错误:', e);
-          }
-        }
-      );
-    } catch (e) {
-      console.log('图传特征不存在，跳过:', e);
-    }
-  }
 
   // ================= 4. 连接断开监听 =================
   disconnectSubscriptionRef.current = connectedPlx.onDisconnected((error) => {
@@ -943,25 +905,6 @@ const feedThermalData = useCallback((bytes: number[]) => {
       const serviceUuid = deviceConfig.serviceUuid;
       const { thermalCharUuid } = settingsRef.current.imgThermalUuid;
       const subs: Subscription[] = [];
-
-      // 仅订阅热相（副设备温度监测）
-      let thermalSub: Subscription | null = null;
-       try {
-        thermalSub = connectedPlx.monitorCharacteristicForService(
-        serviceUuid, thermalCharUuid,
-        (_err, characteristic) => {
-          if (!characteristic?.value) return;
-          const bytes = base64ToBytes(characteristic.value);
-          const frame = parseThermalFrame(bytes);
-          if (!frame) return;
-          updateDeviceTempHistory(device.id, frame.maxTemp, frame.minTemp, frame.avgTemp);
-        }
-      );
-      } catch (e)
-      {
-       console.log('副设备热相特征不存在，跳过:', e);
-      }
-      if (thermalSub) subs.push(thermalSub);
 
       // 断开监听
       const discSub = connectedPlx.onDisconnected(() => {

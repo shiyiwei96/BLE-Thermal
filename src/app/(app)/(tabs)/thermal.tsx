@@ -8,6 +8,7 @@
  * - 热相录制与导出（JSON/CSV/图像序列）
  */
 import React, { useCallback, useRef, useState } from 'react';
+import { useSerial } from '@/lib/serialContext';
 import {
   View,
   Text,
@@ -142,15 +143,24 @@ function FrameThumb({ frame, dataUri, isActive, onPress }: {
 
 // ============ 主页面 ============
 export default function ThermalScreen() {
-  const {
-    connectedDevice,
-    latestThermalFrame,
-    latestThermalDataUri,
-    thermalFrames,
-    settings,
-    updateSettings,
-    clearThermalFrames,
-  } = useBle();
+  
+  const ble = useBle();
+  const usb = useSerial();
+
+  // 优先显示 USB（如果 USB 连接了），否则用 BLE
+  const latestThermalFrame = usb.isConnected
+    ? usb.latestThermalFrame
+    : ble.latestThermalFrame;
+  const latestThermalDataUri = usb.isConnected
+    ? usb.latestThermalDataUri
+    : ble.latestThermalDataUri;
+  const thermalFrames = usb.isConnected
+    ? usb.thermalFrames
+    : ble.thermalFrames;
+  const connectedDevice = ble.connectedDevice;
+  const settings = ble.settings;
+  const updateSettings = ble.updateSettings;
+  const clearThermalFrames = ble.clearThermalFrames;
   const router = useRouter();
 
   const { width } = useWindowDimensions();
