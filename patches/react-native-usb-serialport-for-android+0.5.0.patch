@@ -34,7 +34,7 @@ index 8d08caf..56bad10 100644
 +uvccamera.ndk.dir=${ndkDir}
 +`;
 diff --git a/node_modules/react-native-usb-serialport-for-android/android/src/main/java/com/bastengao/usbserialport/UsbSerialportForAndroidModule.java b/node_modules/react-native-usb-serialport-for-android/android/src/main/java/com/bastengao/usbserialport/UsbSerialportForAndroidModule.java
-index 7e20282..26f2216 100644
+index 7e20282..4212b60 100644
 --- a/node_modules/react-native-usb-serialport-for-android/android/src/main/java/com/bastengao/usbserialport/UsbSerialportForAndroidModule.java
 +++ b/node_modules/react-native-usb-serialport-for-android/android/src/main/java/com/bastengao/usbserialport/UsbSerialportForAndroidModule.java
 @@ -1,12 +1,14 @@
@@ -96,8 +96,8 @@ index 7e20282..26f2216 100644
 -            promise.reject(CODE_DEVICE_NOT_FOND, "device not found");
 -            return;
 +        IntentFilter filter = new IntentFilter(ACTION);
-+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-+            getCurrentActivity().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
++        if (Build.VERSION.SDK_INT >= 33) {   // 33 = Android 13 (TIRAMISU)
++            getCurrentActivity().registerReceiver(receiver, filter, 2);  // 2 = RECEIVER_NOT_EXPORTED
 +        } else {
 +            getCurrentActivity().registerReceiver(receiver, filter);
          }
