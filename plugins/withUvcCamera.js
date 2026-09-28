@@ -57,7 +57,13 @@ function withDeviceFilter(config) {
       const filePath = path.join(xmlDir, 'device_filter.xml');
       fs.writeFileSync(filePath, `<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- UVC 摄像头 -->
     <usb-device class="14" />
+    <!-- TB4117 串口设备：VendorID=0x2BDF=11231, ProductID=0x0101=257 -->
+    <usb-device vendor-id="11231" product-id="257" />
+    <!-- 通用串口类（CDC / vendor-specific） -->
+    <usb-device class="0" />
+    <usb-device class="255" />
 </resources>
 `);
       return config;

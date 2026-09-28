@@ -652,7 +652,7 @@ const handleThermalFrame = useCallback((tempBytes: number[]) => {
     
     thermalPendingRef.current = frame;
     const now = Date.now();
-    const INTERVAL = 100; // 10fps
+    const INTERVAL = 250; // 4fps
 
     if (now - thermalLastRenderRef.current >= INTERVAL) {
       thermalLastRenderRef.current = now;

@@ -328,7 +328,9 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
       const { UsbSerialManager } = await import('react-native-usb-serialport-for-android');
 
       // 请求 USB 权限
+      console.log('[USB] 请求权限, deviceId:', device.deviceId);
       const hasPermission = await UsbSerialManager.tryRequestPermission(device.deviceId);
+      console.log('[USB] 权限结果:', hasPermission); 
       if (!hasPermission) {
         // Permission dialog shown; user needs to re-tap "连接" after granting
         setSerialError('请在弹出的对话框中授予 USB 权限后重试');

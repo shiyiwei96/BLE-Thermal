@@ -255,7 +255,7 @@ export function toFahrenheit(c: number): number {
   return Math.round((c * 9 / 5 + 32) * 10) / 10;
 }
 
-export const MAX_THERMAL_HISTORY = 100;
+export const MAX_THERMAL_HISTORY = 20;
 
 export const COLORMAP_LABELS: Record<ThermalColormap, string> = {
   iron:      '铁红',
