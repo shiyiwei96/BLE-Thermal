@@ -42,6 +42,72 @@ import {
   genId,
 } from './bleService';
 
+// ============ 热相协议常量 ============
+const THERMAL_W = 32;
+const THERMAL_H = 24;
+//const THERMAL_DATA_BYTES = THERMAL_W * THERMAL_H * 2;  // 1536
+const THERMAL_HEADER_LEN = 4;
+const THERMAL_TAIL_LEN = 2;                              // 校验
+const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL_LEN; // 1542
+//const THERMAL_OFFSET = -40;
+
+/**
+ * 解析 32×24 int16 温度矩阵（1536 字节）为 ThermalFrame
+ * 协议：帧头 5A 06 02 00 + 1536B int16 小端 + 2B 校验
+ * 温度公式：raw / 100 - 40
+ */
+function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | null {
+  if (bytes.length < THERMAL_DATA_BYTES) return null;
+
+  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
+  const raw: number[] = new Array(THERMAL_W * THERMAL_H);
+
+  for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
+    const v = view.getInt16(i * 2, true) / 100 + offset;
+    raw[i] = v;
+  }
+
+  // ---- 3×3 中值滤波去坏点 ----
+  const tempData = new Array(THERMAL_W * THERMAL_H);
+  for (let y = 0; y < THERMAL_H; y++) {
+    for (let x = 0; x < THERMAL_W; x++) {
+      const neighbors: number[] = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < THERMAL_H && nx >= 0 && nx < THERMAL_W) {
+            neighbors.push(raw[ny * THERMAL_W + nx]);
+          }
+        }
+      }
+      neighbors.sort((a, b) => a - b);
+      tempData[y * THERMAL_W + x] = neighbors[Math.floor(neighbors.length / 2)];
+    }
+  }
+
+  let maxC = -Infinity, minC = Infinity, sum = 0;
+  let maxIdx = 0, minIdx = 0;
+  for (let i = 0; i < tempData.length; i++) {
+    const v = tempData[i];
+    if (v > maxC) { maxC = v; maxIdx = i; }
+    if (v < minC) { minC = v; minIdx = i; }
+    sum += v;
+  }
+
+  return {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    receivedAt: Date.now(),
+    width: THERMAL_W,
+    height: THERMAL_H,
+    tempData,
+    maxTemp: maxC,
+    minTemp: minC,
+    avgTemp: sum / tempData.length,
+    maxPos: { x: maxIdx % THERMAL_W, y: Math.floor(maxIdx / THERMAL_W) },
+    minPos: { x: minIdx % THERMAL_W, y: Math.floor(minIdx / THERMAL_W) },
+  };
+}
+
 const MAX_LOG_ENTRIES = 1000;
 const MAX_RSSI_HISTORY = 60;
 const MAX_FIELD_HISTORY = 60;
@@ -115,7 +181,7 @@ const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(
 const [thermalFrames, setThermalFrames] = useState<ThermalFrame[]>([]);
 
 const thermalBufferRef = useRef<number[]>([]);
-const thermalModeRef = useRef<'unknown' | 'withHeader' | 'noHeader' | 'data'>('unknown');
+const thermalModeRef = useRef<'unknown' | 'headerA' | 'headerB' | 'noHeader' | 'data'>('unknown');
 const thermalLastRenderRef = useRef(0);
 const thermalPendingRef = useRef<ThermalFrame | null>(null);
 const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,32 +286,42 @@ const renderThermalNow = useCallback((frame: ThermalFrame) => {
   setThermalFrames(prev => [frame, ...prev].slice(0, 100));
 }, []);
 
-const handleThermalFrame = useCallback((tempBytes: number[]) => {
-  // 带帧头 → -40；无帧头 → 0
-  const offset = thermalModeRef.current === 'withHeader' ? -40 : 0;
-  const frame = parseThermalBytes(tempBytes, offset);
-  
-  if (!frame) return;
 
-  thermalPendingRef.current = frame;
-  const now = Date.now();
-  const INTERVAL = 100;
 
-  if (now - thermalLastRenderRef.current >= INTERVAL) {
-    thermalLastRenderRef.current = now;
-    renderThermalNow(frame);
-    thermalPendingRef.current = null;
-  } else if (!thermalTimerRef.current) {
-    thermalTimerRef.current = setTimeout(() => {
-      thermalTimerRef.current = null;
-      if (thermalPendingRef.current) {
-        thermalLastRenderRef.current = Date.now();
-        renderThermalNow(thermalPendingRef.current);
-        thermalPendingRef.current = null;
-      }
-    }, INTERVAL - (now - thermalLastRenderRef.current));
+// ============ 热相帧处理（带 offset + 节流）============
+const handleThermalFrame = useCallback((tempBytes: number[], offset: number) => {
+  try {
+    const frame = parseThermalInt16(tempBytes, offset);
+    if (!frame) {
+      console.log('[热相] 解析失败，长度:', tempBytes.length);
+      return;
+    }
+
+    // 节流：10fps 数据 → 4fps 渲染
+    thermalPendingRef.current = frame;
+    const now = Date.now();
+    const INTERVAL = 250; // 4fps
+
+    if (now - thermalLastRenderRef.current >= INTERVAL) {
+      thermalLastRenderRef.current = now;
+      renderThermalNow(frame);
+      thermalPendingRef.current = null;
+    } else if (!thermalTimerRef.current) {
+      thermalTimerRef.current = setTimeout(() => {
+        thermalTimerRef.current = null;
+        if (thermalPendingRef.current) {
+          thermalLastRenderRef.current = Date.now();
+          renderThermalNow(thermalPendingRef.current);
+          thermalPendingRef.current = null;
+        }
+      }, INTERVAL - (now - thermalLastRenderRef.current));
+    }
+  } catch (e) {
+    console.log('[热相] 处理错误:', e);
   }
 }, [renderThermalNow]);
+
+
 
 // ===== 热相数据分流（自动探测格式）=====
 const feedThermalData = useCallback((bytes: number[]): boolean => {
@@ -255,7 +331,7 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
   // 首次探测：判断是不是热相数据
   if (thermalModeRef.current === 'unknown' && buf.length >= 4) {
     if (buf[0] === 0x5A && buf[1] === 0x06 && buf[2] === 0x02 && buf[3] === 0x00) {
-      thermalModeRef.current = 'withHeader';
+      thermalModeRef.current = 'headerA';
       console.log('[Serial热相] 探测到带帧头模式');
     } else if (
       // 温度合理范围粗筛：int16 值应该在 0~10000（即 0~100℃ * 100）之间
@@ -276,41 +352,72 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
 
   if (thermalModeRef.current === 'data') return false; // 交给普通数据流程
 
-  // ---- 无帧头：定长 1536 切分 ----
+  // ============ 无帧头：定长 1536 切分 ============
   if (thermalModeRef.current === 'noHeader') {
-    while (buf.length >= THERMAL_DATA_BYTES) {
-      const frameBytes = buf.slice(0, THERMAL_DATA_BYTES);
-      buf.splice(0, THERMAL_DATA_BYTES);
-      handleThermalFrame(frameBytes);
+    const NEED = 32 * 24 * 2; // 1536
+    while (buf.length >= NEED) {
+      const frameBytes = buf.slice(0, NEED);
+      buf.splice(0, NEED);
+      handleThermalFrame(frameBytes, 0); // 无帧头 offset = 0
     }
-    if (buf.length > THERMAL_DATA_BYTES * 4) buf.length = 0;
+    if (buf.length > NEED * 4) {
+      console.warn('[热相] 无帧头缓冲溢出，清空');
+      buf.length = 0;
+    }
     return true;
   }
 
-  // ---- 带帧头：找 5A 06 02 00 ----
-  if (thermalModeRef.current === 'withHeader') {
-    while (true) {
-      let idx = -1;
-      for (let i = 0; i <= buf.length - 4; i++) {
-        if (buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
-          idx = i; break;
-        }
-      }
-      if (idx < 0) {
-        if (buf.length > 3) { const k = buf.slice(-3); buf.length = 0; buf.push(...k); }
+  // ============ 带帧头（A 或 B）：查找帧头切分 ============
+  const header: number[] | null =
+    thermalModeRef.current === 'headerA' ? [0x5A, 0x06, 0x02, 0x00]
+    : thermalModeRef.current === 'headerB' ? [0x5A, 0x5A, 0x02, 0x06]
+    : null;
+
+  if (!header) return false;
+
+  while (true) {
+    // 查找帧头位置
+    let idx = -1;
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (buf[i] === header[0] && buf[i + 1] === header[1]
+        && buf[i + 2] === header[2] && buf[i + 3] === header[3]) {
+        idx = i;
         break;
       }
-      if (idx > 0) buf.splice(0, idx);
-      if (buf.length < 4 + THERMAL_DATA_BYTES) break;
-      const tempBytes = buf.slice(4, 4 + THERMAL_DATA_BYTES);
-      buf.splice(0, 4 + THERMAL_DATA_BYTES);
-      handleThermalFrame(tempBytes);
     }
-    if (buf.length > THERMAL_DATA_BYTES * 4) buf.length = 0;
-    return true;
+
+    if (idx < 0) {
+      // 没找到帧头：保留最后 3 字节（防止帧头被切断）
+      if (buf.length > 3) {
+        const keep = buf.slice(-3);
+        buf.length = 0;
+        buf.push(...keep);
+      }
+      break;
+    }
+
+    // 丢弃帧头前的垃圾数据
+    if (idx > 0) buf.splice(0, idx);
+
+    // 数据不足一帧，等下一包
+    if (buf.length < 4 + 32 * 24 * 2) break;
+
+    // 提取 1536 字节温度数据（跳过 4 字节帧头）
+    const tempBytes = buf.slice(4, 4 + 32 * 24 * 2);
+    // 移除整帧（帧头 4 + 数据 1536），校验字节留到下一轮循环处理
+    buf.splice(0, 4 + 32 * 24 * 2);
+
+    // 按帧头类型传 offset
+    const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
+    handleThermalFrame(tempBytes, offset);
   }
-// ---- 未知模式 ---
-  return false;
+
+  // 溢出保护
+  if (buf.length > 32 * 24 * 2 * 4) {
+    console.warn('[热相] 带帧头缓冲溢出，清空');
+    buf.length = 0;
+  }
+  return true;
 }, [handleThermalFrame]);
 
 
