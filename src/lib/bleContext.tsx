@@ -74,19 +74,39 @@ const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL
  * 协议：帧头 5A 06 02 00 + 1536B int16 小端 + 2B 校验
  * 温度公式：raw / 100 - 40
  */
-function parseThermalInt16(bytes: number[], offset: number = 0): ThermalFrame | null {
-  const W = 32, H = 24;
-  const NEED = W * H * 2;
-  if (bytes.length < NEED) return null;
+function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | null {
+  if (bytes.length < THERMAL_DATA_BYTES) return null;
 
-  const view = new DataView(new Uint8Array(bytes.slice(0, NEED)).buffer);
-  const tempData: number[] = new Array(W * H);
+  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
+  const raw: number[] = new Array(THERMAL_W * THERMAL_H);
+
+  for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
+    const v = view.getInt16(i * 2, true) / 100 + offset;
+    raw[i] = v;
+  }
+
+  // ---- 3×3 中值滤波去坏点 ----
+  const tempData = new Array(THERMAL_W * THERMAL_H);
+  for (let y = 0; y < THERMAL_H; y++) {
+    for (let x = 0; x < THERMAL_W; x++) {
+      const neighbors: number[] = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny >= 0 && ny < THERMAL_H && nx >= 0 && nx < THERMAL_W) {
+            neighbors.push(raw[ny * THERMAL_W + nx]);
+          }
+        }
+      }
+      neighbors.sort((a, b) => a - b);
+      tempData[y * THERMAL_W + x] = neighbors[Math.floor(neighbors.length / 2)];
+    }
+  }
+
   let maxC = -Infinity, minC = Infinity, sum = 0;
   let maxIdx = 0, minIdx = 0;
-
-  for (let i = 0; i < W * H; i++) {
-    const v = view.getInt16(i * 2, true) / 100 + offset;
-    tempData[i] = v;
+  for (let i = 0; i < tempData.length; i++) {
+    const v = tempData[i];
     if (v > maxC) { maxC = v; maxIdx = i; }
     if (v < minC) { minC = v; minIdx = i; }
     sum += v;
@@ -95,14 +115,14 @@ function parseThermalInt16(bytes: number[], offset: number = 0): ThermalFrame | 
   return {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     receivedAt: Date.now(),
-    width: W,
-    height: H,
+    width: THERMAL_W,
+    height: THERMAL_H,
     tempData,
     maxTemp: maxC,
     minTemp: minC,
-    avgTemp: sum / (W * H),
-    maxPos: { x: maxIdx % W, y: Math.floor(maxIdx / W) },
-    minPos: { x: minIdx % W, y: Math.floor(minIdx / W) },
+    avgTemp: sum / tempData.length,
+    maxPos: { x: maxIdx % THERMAL_W, y: Math.floor(maxIdx / THERMAL_W) },
+    minPos: { x: minIdx % THERMAL_W, y: Math.floor(minIdx / THERMAL_W) },
   };
 }
 
@@ -680,22 +700,34 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
   buf.push(...bytes);
 
   // ============ 首次探测模式 ============
-  if (thermalModeRef.current === 'unknown' && buf.length >= 4) {
-    if (buf[0] === 0x5A && buf[1] === 0x06 && buf[2] === 0x02 && buf[3] === 0x00) {
-      thermalModeRef.current = 'headerA';
-      console.log('[热相] 帧头模式 A: 5A 06 02 00');
-    } else if (buf[0] === 0x5A && buf[1] === 0x5A && buf[2] === 0x02 && buf[3] === 0x06) {
-      thermalModeRef.current = 'headerB';
-      console.log('[热相] 帧头模式 B: 5A 5A 02 06');
-    } else {
-      // 用前两个 int16 值是否落在温度合理范围粗筛
-      const v0 = buf[0] | (buf[1] << 8);
-      const v1 = buf[2] | (buf[3] << 8);
-      const plausible = v0 > 100 && v0 < 10000 && v1 > 100 && v1 < 10000;
-      thermalModeRef.current = plausible ? 'noHeader' : 'data';
-      console.log('[热相] 探测结果:', thermalModeRef.current);
+  if (thermalModeRef.current === 'unknown' && buf.length >= 8) {
+  // 在 buf 里找 5A 06 02 00 或 5A 5A 02 06
+  let foundA = -1, foundB = -1;
+  for (let i = 0; i <= buf.length - 4; i++) {
+    if (foundA < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+      foundA = i;
     }
+    if (foundB < 0 && buf[i] === 0x5A && buf[i+1] === 0x5A && buf[i+2] === 0x02 && buf[i+3] === 0x06) {
+      foundB = i;
+    }
+    if (foundA >= 0 || foundB >= 0) break;
   }
+
+  if (foundA >= 0) {
+    thermalModeRef.current = 'headerA';
+    console.log('[热相] 帧头模式 A');
+  } else if (foundB >= 0) {
+    thermalModeRef.current = 'headerB';
+    console.log('[热相] 帧头模式 B');
+  } else if (buf.length >= 32) {
+    // 等了 32 字节还没帧头，再考虑 noHeader/data
+    const v0 = buf[0] | (buf[1] << 8);
+    const v1 = buf[2] | (buf[3] << 8);
+    const plausible = v0 > 100 && v0 < 10000 && v1 > 100 && v1 < 10000;
+    thermalModeRef.current = plausible ? 'noHeader' : 'data';
+    console.log('[热相] 探测:', thermalModeRef.current);
+  }
+}
 
   // ============ 普通数据：不消费 ============
   if (thermalModeRef.current === 'data') return false;
