@@ -74,39 +74,19 @@ const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL
  * 协议：帧头 5A 06 02 00 + 1536B int16 小端 + 2B 校验
  * 温度公式：raw / 100 - 40
  */
-function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | null {
-  if (bytes.length < THERMAL_DATA_BYTES) return null;
+function parseThermalInt16(bytes: number[], offset: number = 0): ThermalFrame | null {
+  const W = 32, H = 24;
+  const NEED = W * H * 2;
+  if (bytes.length < NEED) return null;
 
-  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
-  const raw: number[] = new Array(THERMAL_W * THERMAL_H);
-
-  for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
-    const v = view.getInt16(i * 2, true) / 100 + offset;
-    raw[i] = v;
-  }
-
-  // ---- 3×3 中值滤波去坏点 ----
-  const tempData = new Array(THERMAL_W * THERMAL_H);
-  for (let y = 0; y < THERMAL_H; y++) {
-    for (let x = 0; x < THERMAL_W; x++) {
-      const neighbors: number[] = [];
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          const ny = y + dy, nx = x + dx;
-          if (ny >= 0 && ny < THERMAL_H && nx >= 0 && nx < THERMAL_W) {
-            neighbors.push(raw[ny * THERMAL_W + nx]);
-          }
-        }
-      }
-      neighbors.sort((a, b) => a - b);
-      tempData[y * THERMAL_W + x] = neighbors[Math.floor(neighbors.length / 2)];
-    }
-  }
-
+  const view = new DataView(new Uint8Array(bytes.slice(0, NEED)).buffer);
+  const tempData: number[] = new Array(W * H);
   let maxC = -Infinity, minC = Infinity, sum = 0;
   let maxIdx = 0, minIdx = 0;
-  for (let i = 0; i < tempData.length; i++) {
-    const v = tempData[i];
+
+  for (let i = 0; i < W * H; i++) {
+    const v = view.getInt16(i * 2, true) / 100 + offset;
+    tempData[i] = v;
     if (v > maxC) { maxC = v; maxIdx = i; }
     if (v < minC) { minC = v; minIdx = i; }
     sum += v;
@@ -115,14 +95,14 @@ function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | n
   return {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     receivedAt: Date.now(),
-    width: THERMAL_W,
-    height: THERMAL_H,
+    width: W,
+    height: H,
     tempData,
     maxTemp: maxC,
     minTemp: minC,
-    avgTemp: sum / tempData.length,
-    maxPos: { x: maxIdx % THERMAL_W, y: Math.floor(maxIdx / THERMAL_W) },
-    minPos: { x: minIdx % THERMAL_W, y: Math.floor(minIdx / THERMAL_W) },
+    avgTemp: sum / (W * H),
+    maxPos: { x: maxIdx % W, y: Math.floor(maxIdx / W) },
+    minPos: { x: minIdx % W, y: Math.floor(minIdx / W) },
   };
 }
 
