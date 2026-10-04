@@ -762,6 +762,7 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
       }
       if (foundA >= 0 && foundB >= 0 && foundC >= 0) break;
     }
+    console.log('[热相] 探测: mode =', thermalModeRef.current, 'foundA =', foundA, 'foundB =', foundB, 'foundC =', foundC, 'buf =', buf.length);
 
     if (foundA >= 0) { thermalModeRef.current = 'headerA'; console.log('[热相] 帧头A int16(-40)'); }
     else if (foundB >= 0) { thermalModeRef.current = 'headerB'; console.log('[热相] 帧头B int16(0)'); }
@@ -981,15 +982,15 @@ notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
     stopAllTasks();
     // 清空图传缓冲
     imageBufferRef.current = [];
-    // 清空热相节流状态
-thermalPendingRef.current = null;
-thermalLastRenderRef.current = 0;
-if (thermalTimerRef.current) {
-  clearTimeout(thermalTimerRef.current);
-  thermalTimerRef.current = null;
-}
-thermalModeRef.current = 'unknown';
-thermalBufferRef.current = [];
+    // 清空热相状态
+    thermalPendingRef.current = null;
+    thermalLastRenderRef.current = 0;
+    if (thermalTimerRef.current) {
+      clearTimeout(thermalTimerRef.current);
+      thermalTimerRef.current = null;
+     }
+    thermalModeRef.current = 'unknown';
+    thermalBufferRef.current = [];
   });
 
   // ================= 5. RSSI 定时读取 =================
