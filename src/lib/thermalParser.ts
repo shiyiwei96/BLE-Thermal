@@ -66,6 +66,7 @@ export function parseInt16Matrix(tempBytes: number[],offset: number = 0): Therma
 
 /** 解析 float32 温度矩阵 */
 export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | null {
+  console.log('[float32] 收到前32字节:', bytes.slice(0, 32).map(b => b.toString(16).padStart(2, '0')).join(' '));
   if (bytes.length < THERMAL_FLOAT32_BYTES) return null;
 
   const W = THERMAL_W;
@@ -139,7 +140,8 @@ export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | 
     if (v < minC) { minC = v; minIdx = i; }
     sum += v;
   }
-
+  console.log('[float32] tempData[0..15]:', tempData.slice(0, 16).map(v => v.toFixed(1)).join(','));
+  
   return buildFrame(filtered, maxC, minC, sum / filtered.length, maxIdx, minIdx);
 }
 
