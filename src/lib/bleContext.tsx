@@ -691,18 +691,26 @@ const renderThermalNow = useCallback((frame: ThermalFrame) => {
 
 
 // ============ 热相帧处理（带 offset + 节流）============
-const handleThermalFrame = useCallback((tempBytes: number[], offset: number) => {
+const handleThermalFrame = useCallback((
+  dataBytes: number[],
+  offset: number,
+  type: 'int16' | 'float32' = 'int16'
+) => {
   try {
-    const frame = parseThermalInt16(tempBytes, offset);
+    // ✅ 按类型选择解析函数
+    const frame = type === 'float32'
+      ? parseFloat32Matrix(dataBytes, offset)
+      : parseThermalInt16(dataBytes, offset);
+
     if (!frame) {
-      console.log('[热相] 解析失败，长度:', tempBytes.length);
+      console.log('[热相] 解析失败，长度:', dataBytes.length, '类型:', type);
       return;
     }
 
-    // 节流：10fps 数据 → 4fps 渲染
+    // 节流：4fps 渲染
     thermalPendingRef.current = frame;
     const now = Date.now();
-    const INTERVAL = 250; // 4fps
+    const INTERVAL = type === 'float32' ? 250 : 250;
 
     if (now - thermalLastRenderRef.current >= INTERVAL) {
       thermalLastRenderRef.current = now;
@@ -811,15 +819,7 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
       while (buf.length >= NEED) {
         const frameBytes = buf.slice(0, NEED);
         buf.splice(0, NEED);
-        const frame = isFloat ? parseFloat32Matrix(frameBytes, 0) : parseInt16Matrix(frameBytes, 0);
-        if (frame) {
-          thermalPendingRef.current = frame;
-          const now = Date.now();
-          if (now - thermalLastRenderRef.current >= 250) {
-            thermalLastRenderRef.current = now;
-            renderThermalNow(frame);
-          }
-        }
+        handleThermalFrame(frameBytes, 0, isFloat ? 'float32' : 'int16');  
       }
       if (buf.length > NEED * 4) buf.length = 0;
       break;
@@ -862,30 +862,8 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
     buf.splice(0, 4 + dataLen);
 
     const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
-    const frame = isFloat ? parseFloat32Matrix(dataBytes, offset) : parseInt16Matrix(dataBytes, offset);
+    handleThermalFrame(dataBytes, offset, isFloat ? 'float32' : 'int16'); 
 
-    if (frame) {
-      // 节流：250ms 一次（4fps）
-      const now = Date.now();
-      const INTERVAL = 250;
-      if (now - thermalLastRenderRef.current >= INTERVAL) {
-        thermalLastRenderRef.current = now;
-        renderThermalNow(frame);
-        thermalPendingRef.current = null;
-      } else {
-        thermalPendingRef.current = frame;
-        if (!thermalTimerRef.current) {
-          thermalTimerRef.current = setTimeout(() => {
-            thermalTimerRef.current = null;
-            if (thermalPendingRef.current) {
-              thermalLastRenderRef.current = Date.now();
-              renderThermalNow(thermalPendingRef.current);
-              thermalPendingRef.current = null;
-            }
-          }, INTERVAL - (now - thermalLastRenderRef.current));
-        }
-      }
-    }
   }
 
   // 溢出保护
