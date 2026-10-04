@@ -10,6 +10,7 @@
  */
 import type { ThermalColormap, ThermalFrame, ThermalRegionStats } from './types';
 import { genId } from './bleService';
+import { ThermalAnalysis } from './thermalParser';
 
 // ============ 数据解析 ============
 import { THERMAL_WIDTH, THERMAL_HEIGHT, THERMAL_POINT_COUNT } from './types';
@@ -206,6 +207,56 @@ export function pixelsToDataUri(
   return 'data:image/bmp;base64,' + uint8ArrayToBase64(buf);
 }
 
+/**
+ * 在渲染后的像素图上画热点框和温度文字
+ * 用一个简单方案：在热点中心画 3×3 的红框，旁边显示温度
+ */
+export function drawHotspotMarkers(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+  analysis: ThermalAnalysis
+): Uint8Array {
+  const out = new Uint8Array(pixels); // 拷贝
+
+  const drawPixel = (x: number, y: number, r: number, g: number, b: number) => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const i = (y * width + x) * 4;
+    out[i] = r; out[i + 1] = g; out[i + 2] = b; out[i + 3] = 255;
+  };
+
+  // 画热点框（红色）
+  for (const h of analysis.hotspots) {
+    const { x, y, w, h: hh } = h.bbox;
+    // 上下边
+    for (let i = x; i < x + w; i++) {
+      drawPixel(i, y, 255, 0, 0);
+      drawPixel(i, y + hh - 1, 255, 0, 0);
+    }
+    // 左右边
+    for (let j = y; j < y + hh; j++) {
+      drawPixel(x, j, 255, 0, 0);
+      drawPixel(x + w - 1, j, 255, 0, 0);
+    }
+  }
+
+  // 画冷点框（蓝色）
+  for (const c of analysis.coldspots) {
+    const { x, y, w, h: hh } = c.bbox;
+    for (let i = x; i < x + w; i++) {
+      drawPixel(i, y, 0, 100, 255);
+      drawPixel(i, y + hh - 1, 0, 100, 255);
+    }
+    for (let j = y; j < y + hh; j++) {
+      drawPixel(x, j, 0, 100, 255);
+      drawPixel(x + w - 1, j, 0, 100, 255);
+    }
+  }
+
+  return out;
+}
+
+
 function writeUint32LE(buf: Uint8Array, offset: number, value: number) {
   buf[offset]     = value & 0xFF;
   buf[offset + 1] = (value >> 8)  & 0xFF;
@@ -263,3 +314,4 @@ export const COLORMAP_LABELS: Record<ThermalColormap, string> = {
   grayscale: '灰度',
   plasma:    '等离子',
 };
+

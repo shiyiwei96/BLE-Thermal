@@ -54,6 +54,17 @@ const RED          = '#FF3333';
 const ORANGE       = '#FF6B00';
 const GREEN        = '#00E676';
 const BLUE_COLD    = '#00BFFF';
+const BLUE         = '#3B82F6';
+
+// ============ 手势名称映射 ============
+const GESTURE_NAMES: Record<number, string> = {
+  0: '无手势',
+  1: '手势 1',
+  2: '手势 2',
+  3: '手势 3',
+  4: '手势 4',
+  5: '手势 5',
+};
 
 // ============ 工具 ============
 function formatTime(ts: number): string {
@@ -73,6 +84,103 @@ function TempCard({ label, value, color }: { label: string; value: string; color
     <View style={{ flex: 1, backgroundColor: CARD_BG, borderWidth: 1, borderColor: BORDER, borderRadius: 2, padding: 10, alignItems: 'center', gap: 2 }}>
       <Text style={{ color: TEXT_MUTED, fontSize: 9 }}>{label}</Text>
       <Text style={{ color, fontSize: 16, fontWeight: '800', fontFamily: 'monospace' }}>{value}</Text>
+    </View>
+  );
+}
+
+// ============ 温度分析卡片 ============
+function AnalysisCard({ frame }: { frame: ThermalFrame }) {
+  const a = frame.analysis;
+  if (!a) return null;
+
+  return (
+    <View style={{
+      backgroundColor: CARD_BG, borderColor: BORDER, borderWidth: 1,
+      borderRadius: 2, padding: 12, marginBottom: 12, gap: 8,
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ color: TEXT_PRIMARY, fontSize: 12, fontWeight: '700' }}>
+          温度分析
+        </Text>
+        <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }}>
+          {formatTime(frame.receivedAt)}
+        </Text>
+      </View>
+
+      {/* 全局温差 */}
+      <View style={{
+        flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+        backgroundColor: `${CYAN}10`, padding: 8, borderRadius: 2,
+      }}>
+        <Text style={{ color: TEXT_MUTED, fontSize: 11 }}>全局温差 ΔT</Text>
+        <Text style={{ color: CYAN, fontSize: 16, fontWeight: '800', fontFamily: 'monospace' }}>
+          {a.deltaT.toFixed(2)} ℃
+        </Text>
+      </View>
+
+      {/* 全局极值 */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={{ color: TEXT_MUTED, fontSize: 10 }}>
+          全局 Max: <Text style={{ color: RED }}>{a.globalMax.toFixed(1)}℃</Text>
+        </Text>
+        <Text style={{ color: TEXT_MUTED, fontSize: 10 }}>
+          全局 Min: <Text style={{ color: BLUE }}>{a.globalMin.toFixed(1)}℃</Text>
+        </Text>
+        <Text style={{ color: TEXT_MUTED, fontSize: 10 }}>
+          Avg: <Text style={{ color: ORANGE }}>{a.globalAvg.toFixed(1)}℃</Text>
+        </Text>
+      </View>
+
+      {/* 热点区域 */}
+      {a.hotspots.length > 0 && (
+        <View style={{ gap: 4 }}>
+          <Text style={{ color: RED, fontSize: 11, fontWeight: '700' }}>
+            热点区域 ({a.hotspots.length})
+          </Text>
+          {a.hotspots.map((h, i) => (
+            <View key={i} style={{
+              flexDirection: 'row', justifyContent: 'space-between',
+              backgroundColor: `${RED}10`, padding: 6, borderRadius: 2,
+            }}>
+              <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }}>
+                #{i + 1}  ({h.centerX.toFixed(0)},{h.centerY.toFixed(0)})  {h.pixelCount}px
+              </Text>
+              <Text style={{ color: RED, fontSize: 11, fontWeight: '700', fontFamily: 'monospace' }}>
+                {h.maxTemp.toFixed(1)}℃  Δ{(h.maxTemp - h.minTemp).toFixed(1)}℃
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* 冷点区域 */}
+      {a.coldspots.length > 0 && (
+        <View style={{ gap: 4 }}>
+          <Text style={{ color: BLUE, fontSize: 11, fontWeight: '700' }}>
+            冷点区域 ({a.coldspots.length})
+          </Text>
+          {a.coldspots.map((c, i) => (
+            <View key={i} style={{
+              flexDirection: 'row', justifyContent: 'space-between',
+              backgroundColor: `${BLUE}10`, padding: 6, borderRadius: 2,
+            }}>
+              <Text style={{ color: TEXT_MUTED, fontSize: 10, fontFamily: 'monospace' }}>
+                #{i + 1}  ({c.centerX.toFixed(0)},{c.centerY.toFixed(0)})  {c.pixelCount}px
+              </Text>
+              <Text style={{ color: BLUE, fontSize: 11, fontWeight: '700', fontFamily: 'monospace' }}>
+                {c.minTemp.toFixed(1)}℃  Δ{(c.maxTemp - c.minTemp).toFixed(1)}℃
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* 无热点提示 */}
+      {a.hotspots.length === 0 && a.coldspots.length === 0 && (
+        <Text style={{ color: TEXT_MUTED, fontSize: 10 }}>
+          无显著热点 / 冷点（ΔT {'<'} 3℃）
+        </Text>
+      )}
     </View>
   );
 }
@@ -157,6 +265,10 @@ export default function ThermalScreen() {
   const thermalFrames = usb.isConnected
     ? usb.thermalFrames
     : ble.thermalFrames;
+  const latestGesture = usb.isConnected
+    ? usb.latestGesture
+    : ble.latestGesture;
+
   const connectedDevice = ble.connectedDevice;
   const settings = ble.settings;
   const updateSettings = ble.updateSettings;
@@ -214,6 +326,7 @@ React.useEffect(() => {
   }
 }, [latestThermalFrame, latestThermalDataUri]);
 
+
 // 批量预计算历史帧的 dataUri（避免每个 item 渲染时 setState）
 React.useEffect(() => {
   setFrameUriCache(prev => {
@@ -234,10 +347,10 @@ React.useEffect(() => {
       changed = true;
     }
 
-    // 缓存裁剪：最多保留 100 条，超出按 key 顺序保留最后 100 条
+    // 缓存裁剪：最多保留 20 条，超出按 key 顺序保留最后 20 条
     const keys = Object.keys(next);
-    if (keys.length > 100) {
-      const keep = keys.slice(-100);
+    if (keys.length > 20) {
+      const keep = keys.slice(-20);
       const trimmed: Record<string, string> = {};
       for (const k of keep) trimmed[k] = next[k];
       return trimmed;
@@ -549,7 +662,21 @@ const getFrameUri = useCallback((frame: ThermalFrame): string => {
             拖动图像可框选区域进行温度分析
           </Text>
         )}
-
+        
+        // 在温度统计卡片上方插入手势显示
+{latestGesture !== null && (
+  <View style={{
+    backgroundColor: CARD_BG,
+    borderColor: CYAN, borderWidth: 1, borderRadius: 2,
+    padding: 12, marginBottom: 12,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  }}>
+    <Text style={{ color: TEXT_MUTED, fontSize: 12 }}>AI 识别</Text>
+    <Text style={{ color: CYAN, fontSize: 22, fontWeight: '800', fontFamily: 'monospace' }}>
+      手势 {latestGesture}
+    </Text>
+  </View>
+)}
         {/* ===== 温度统计 ===== */}
         {displayFrame ? (
           <View style={{ flexDirection: 'row', gap: 6 }}>
@@ -562,6 +689,9 @@ const getFrameUri = useCallback((frame: ThermalFrame): string => {
             <Text style={{ color: TEXT_MUTED, fontSize: 11 }}>连接设备并接收热相数据后显示温度统计</Text>
           </View>
         )}
+
+        {/* ===== 温度分析卡片 ===== */}
+        {displayFrame?.analysis && <AnalysisCard frame={displayFrame} />}
 
         {/* ===== 框选区域统计 ===== */}
         {regionStats && (
@@ -834,6 +964,24 @@ const getFrameUri = useCallback((frame: ThermalFrame): string => {
             ))}
           </View>
         )}
+      
+      {/* ===== AI 手势显示 ===== */}
+        {latestGesture !== null && (
+          <View style={{
+            backgroundColor: CARD_BG, borderColor: CYAN, borderWidth: 1,
+            borderRadius: 2, padding: 12, marginBottom: 12,
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Ionicons name="hand-left" size={20} color={CYAN} />
+              <Text style={{ color: TEXT_MUTED, fontSize: 12 }}>AI 识别结果</Text>
+            </View>
+            <Text style={{ color: CYAN, fontSize: 22, fontWeight: '800', fontFamily: 'monospace' }}>
+              {GESTURE_NAMES[latestGesture] ?? `手势 ${latestGesture}`}
+            </Text>
+          </View>
+        )}
+
 
       </ScrollView>
     </SafeAreaView>

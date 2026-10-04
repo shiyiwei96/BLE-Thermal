@@ -3,7 +3,7 @@
  * 使用 react-native-usb-serialport-for-android 实现
  * 仅支持 Android - iOS 显示不支持提示
  */
-import { parseThermalBytes, renderThermalFrame, THERMAL_DATA_BYTES } from './thermalParser';
+import { parseInt16Matrix, renderThermalFrame, THERMAL_INT16_BYTES } from './thermalParser';
 import React, {
   createContext,
   useCallback,
@@ -45,10 +45,10 @@ import {
 // ============ 热相协议常量 ============
 const THERMAL_W = 32;
 const THERMAL_H = 24;
-//const THERMAL_DATA_BYTES = THERMAL_W * THERMAL_H * 2;  // 1536
+//const THERMAL_INT16_BYTES = THERMAL_W * THERMAL_H * 2;  // 1536
 const THERMAL_HEADER_LEN = 4;
 const THERMAL_TAIL_LEN = 2;                              // 校验
-const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL_LEN; // 1542
+const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_INT16_BYTES + THERMAL_TAIL_LEN; // 1542
 //const THERMAL_OFFSET = -40;
 
 /**
@@ -57,9 +57,9 @@ const THERMAL_TOTAL_LEN = THERMAL_HEADER_LEN + THERMAL_DATA_BYTES + THERMAL_TAIL
  * 温度公式：raw / 100 - 40
  */
 function parseThermalInt16(bytes: number[],offset: number = 0): ThermalFrame | null {
-  if (bytes.length < THERMAL_DATA_BYTES) return null;
+  if (bytes.length < THERMAL_INT16_BYTES) return null;
 
-  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_DATA_BYTES)).buffer);
+  const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_INT16_BYTES)).buffer);
   const raw: number[] = new Array(THERMAL_W * THERMAL_H);
 
   for (let i = 0; i < THERMAL_W * THERMAL_H; i++) {
@@ -140,6 +140,8 @@ export interface SerialContextType {
   latestThermalFrame: ThermalFrame | null;
   latestThermalDataUri: string | null;
   thermalFrames: ThermalFrame[];
+  latestGesture: number | null;
+  gestureHistory: Array<{ gesture: number; timestamp: number }>;
   isConnected: boolean;   // 加一个方便热相页判断
 
   // 操作
@@ -179,7 +181,8 @@ export function SerialProvider({ children, settings }: { children: React.ReactNo
 const [latestThermalFrame, setLatestThermalFrame] = useState<ThermalFrame | null>(null);
 const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(null);
 const [thermalFrames, setThermalFrames] = useState<ThermalFrame[]>([]);
-
+const [latestGesture, setLatestGesture] = useState<number | null>(null);
+const [gestureHistory, setGestureHistory] = useState<Array<{ gesture: number; timestamp: number }>>([]);
 const thermalBufferRef = useRef<number[]>([]);
 const thermalModeRef = useRef<'unknown' | 'headerA' | 'headerB' | 'noHeader' | 'data'>('unknown');
 const thermalLastRenderRef = useRef(0);
@@ -600,6 +603,8 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
     latestThermalFrame,
     latestThermalDataUri,
     thermalFrames,
+    latestGesture,
+    gestureHistory,
     isConnected: connectedSerial !== null,
   };
 

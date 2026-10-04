@@ -246,6 +246,22 @@ export const THERMAL_POINT_COUNT = THERMAL_WIDTH * THERMAL_HEIGHT; // 768
 export const THERMAL_BYTES_FLOAT32 = THERMAL_POINT_COUNT * 4;      // 3072
 export const THERMAL_BYTES_INT16 = THERMAL_POINT_COUNT * 2;        // 1536
 
+// 热相设备协议模式
+export type ThermalMode = 'unknown' | 'headerA' | 'headerB' | 'headerC' | 'noHeader' | 'floatNoHeader' | 'data';
+
+// AI 手势结果
+export interface GestureResult {
+  gesture: number;       // 0~5
+  timestamp: number;
+  confidence?: number;   // 如果协议带置信度
+}
+
+// 帧头常量
+export const THERMAL_HEADER_A = [0x5A, 0x06, 0x02, 0x00]; // int16, offset -40
+export const THERMAL_HEADER_B = [0x5A, 0x5A, 0x02, 0x06]; // int16, offset 0
+export const THERMAL_HEADER_C = [0x5A, 0x06, 0x03, 0x00]; // float32, offset 0
+
+export const GESTURE_PREFIX = 'predict gesture:';
 
 /** 单帧热成像数据 */
 export interface ThermalFrame {
@@ -260,6 +276,32 @@ export interface ThermalFrame {
   avgTemp: number;   // 平均温度 ℃
   maxPos: { x: number; y: number };
   minPos: { x: number; y: number };
+  /** 温度分析结果（由 thermalParser.analyzeThermal 生成） */
+  analysis?: {
+    globalMax: number;
+    globalMin: number;
+    globalAvg: number;
+    deltaT: number;
+    hotspots: Array<{
+      centerX: number;
+      centerY: number;
+      pixelCount: number;
+      maxTemp: number;
+      minTemp: number;
+      avgTemp: number;
+      bbox: { x: number; y: number; w: number; h: number };
+    }>;
+    coldspots: Array<{
+      centerX: number;
+      centerY: number;
+      pixelCount: number;
+      maxTemp: number;
+      minTemp: number;
+      avgTemp: number;
+      bbox: { x: number; y: number; w: number; h: number };
+    }>;
+    hasSignificantHotspot: boolean;
+  };
 }
 
 /** 框选区域温度统计 */
