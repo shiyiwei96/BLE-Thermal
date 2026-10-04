@@ -63,25 +63,27 @@ export function parseInt16Matrix(tempBytes: number[],offset: number = 0): Therma
   };
 }
 
+
 /** 解析 float32 温度矩阵 */
 export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | null {
   if (bytes.length < THERMAL_FLOAT32_BYTES) return null;
 
-  const W = THERMAL_W, H = THERMAL_H;
+  const W = THERMAL_W;
+  const H = THERMAL_H;
   const view = new DataView(new Uint8Array(bytes.slice(0, THERMAL_FLOAT32_BYTES)).buffer);
   const raw: number[] = new Array(W * H);
 
-  // 1. 先读原始值
+  // ============ 1. 读原始值 + 过滤 NaN/异常 ============
   for (let i = 0; i < W * H; i++) {
     let v = view.getFloat32(i * 4, true);
     if (!isFinite(v) || v < -50 || v > 200) {
-      raw[i] = NaN;
+      raw[i] = NaN;   // 标记为坏点
     } else {
       raw[i] = v + offset;
     }
   }
 
-  // 2. NaN 用 3×3 邻域非 NaN 均值替换
+  // ============ 2. 坏点用邻域中值替换 ============
   const tempData: number[] = new Array(W * H);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -90,32 +92,55 @@ export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | 
         tempData[idx] = raw[idx];
         continue;
       }
-
-      let sum = 0, cnt = 0;
+      // 3×3 邻域
+      const neighbors: number[] = [];
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
           if (dx === 0 && dy === 0) continue;
           const ny = y + dy, nx = x + dx;
           if (ny < 0 || ny >= H || nx < 0 || nx >= W) continue;
           const nv = raw[ny * W + nx];
-          if (!isNaN(nv)) { sum += nv; cnt++; }
+          if (!isNaN(nv)) neighbors.push(nv);
         }
       }
-      tempData[idx] = cnt > 0 ? sum / cnt : 25.0;   // 邻域全 NaN 就用 25℃
+      if (neighbors.length > 0) {
+        neighbors.sort((a, b) => a - b);
+        tempData[idx] = neighbors[Math.floor(neighbors.length / 2)];
+      } else {
+        tempData[idx] = 25.0;
+      }
     }
   }
 
-  // 3. 统计
+  // ============ 3. 3×3 中值滤波（去局部坏点）============
+  // 只对已经过 NaN 处理的 tempData 再滤一次，去掉孤立的亮点/暗点
+  const filtered: number[] = new Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const neighbors: number[] = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny < 0 || ny >= H || nx < 0 || nx >= W) continue;
+          neighbors.push(tempData[ny * W + nx]);
+        }
+      }
+      neighbors.sort((a, b) => a - b);
+      filtered[y * W + x] = neighbors[Math.floor(neighbors.length / 2)];
+    }
+  }
+
+  // ============ 4. 统计 ============
   let maxC = -Infinity, minC = Infinity, sum = 0;
   let maxIdx = 0, minIdx = 0;
-  for (let i = 0; i < tempData.length; i++) {
-    const v = tempData[i];
+  for (let i = 0; i < filtered.length; i++) {
+    const v = filtered[i];
     if (v > maxC) { maxC = v; maxIdx = i; }
     if (v < minC) { minC = v; minIdx = i; }
     sum += v;
   }
 
-  return buildFrame(tempData, maxC, minC, sum / tempData.length, maxIdx, minIdx);
+  return buildFrame(filtered, maxC, minC, sum / filtered.length, maxIdx, minIdx);
 }
 
 

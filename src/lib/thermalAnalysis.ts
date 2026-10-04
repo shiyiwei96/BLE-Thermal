@@ -315,3 +315,84 @@ export const COLORMAP_LABELS: Record<ThermalColormap, string> = {
   plasma:    '等离子',
 };
 
+
+/**
+ * 双线性插值渲染：把 32×24 温度矩阵放大到 (width*scale) × (height*scale)
+ * @param frame     温度帧
+ * @param colormap  色图
+ * @param scale     放大倍数（2/3/4/6/8）
+ */
+// 高斯模糊：在 renderThermalPixelsBilinear 之前，先对 frame.tempData 做一次 3×3 均值
+export function smoothTempData(tempData: number[], W: number, H: number): number[] {
+  const out = new Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let sum = 0, cnt = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy, nx = x + dx;
+          if (ny < 0 || ny >= H || nx < 0 || nx >= W) continue;
+          sum += tempData[ny * W + nx];
+          cnt++;
+        }
+      }
+      out[y * W + x] = sum / cnt;
+    }
+  }
+  return out;
+}
+
+export function renderThermalPixelsBilinear(
+  frame: ThermalFrame,
+  colormap: ThermalColormap,
+  scale: number = 4
+): { pixels: Uint8Array; width: number; height: number } {
+  const W = frame.width;
+  const H = frame.height;
+  const outW = W * scale;
+  const outH = H * scale;
+
+  const { tempData, minTemp, maxTemp } = frame;
+  const range = maxTemp - minTemp || 1;
+  const colorFn = getColormapFn(colormap);
+  const pixels = new Uint8Array(outW * outH * 4);
+
+  for (let y = 0; y < outH; y++) {
+    // 源坐标（浮点）
+    const fy = (y + 0.5) / scale - 0.5;
+    const y0 = Math.max(0, Math.min(H - 1, Math.floor(fy)));
+    const y1 = Math.max(0, Math.min(H - 1, y0 + 1));
+    const dy = Math.max(0, Math.min(1, fy - y0));
+
+    for (let x = 0; x < outW; x++) {
+      const fx = (x + 0.5) / scale - 0.5;
+      const x0 = Math.max(0, Math.min(W - 1, Math.floor(fx)));
+      const x1 = Math.max(0, Math.min(W - 1, x0 + 1));
+      const dx = Math.max(0, Math.min(1, fx - x0));
+
+      // 四邻域
+      const v00 = tempData[y0 * W + x0];
+      const v10 = tempData[y0 * W + x1];
+      const v01 = tempData[y1 * W + x0];
+      const v11 = tempData[y1 * W + x1];
+
+      // 双线性插值
+      const v = v00 * (1 - dx) * (1 - dy)
+              + v10 * dx * (1 - dy)
+              + v01 * (1 - dx) * dy
+              + v11 * dx * dy;
+
+      // 归一化 → 颜色
+      const t = (v - minTemp) / range;
+      const [r, g, b, a] = colorFn(t);
+
+      const i = (y * outW + x) * 4;
+      pixels[i] = r;
+      pixels[i + 1] = g;
+      pixels[i + 2] = b;
+      pixels[i + 3] = a ?? 255;
+    }
+  }
+
+  return { pixels, width: outW, height: outH };
+}

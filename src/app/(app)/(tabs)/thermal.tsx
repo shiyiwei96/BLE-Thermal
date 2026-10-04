@@ -27,6 +27,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useBle } from '@/lib/bleContext';
 import {
   renderThermalPixels,
+  renderThermalPixelsBilinear,
   pixelsToDataUri,
   calcRegionStats,
   toFahrenheit,
@@ -387,7 +388,8 @@ const getFrameUri = useCallback((frame: ThermalFrame): string => {
   if (cached) return cached;
 
   // 缓存未命中：同步渲染一次，仅返回结果，不 setState
-  const pixels = renderThermalPixels(frame, colormap);
+  // 👇 用双线性
+  const { pixels, width, height } = renderThermalPixelsBilinear(frame, colormap, 4);
   return pixelsToDataUri(pixels, frame.width, frame.height);
 }, [frameUriCache, colormap]);
 

@@ -62,6 +62,7 @@ import {
 import {
   parseThermalFrame,
   renderThermalPixels,
+  renderThermalPixelsBilinear,
   pixelsToDataUri,
   MAX_THERMAL_HISTORY,
   drawHotspotMarkers,
@@ -659,8 +660,16 @@ const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 // ============ 热相渲染（节流 4fps）============
 const renderThermalNow = useCallback((frame: ThermalFrame) => {
   try {
+    console.log('[热相] frame max/min/avg:',
+    frame.maxTemp.toFixed(2),
+    frame.minTemp.toFixed(2),
+    frame.avgTemp.toFixed(2),
+    'tempData[0]:', frame.tempData[0].toFixed(2)
+  );
     const colormap = (settingsRef.current.thermalColormap ?? 'iron') as ThermalColormap;
-    let pixels = renderThermalPixels(frame, colormap);
+    // 👇 用双线性插值放大 4 倍（32×24 → 128×96）
+    let { pixels, width, height } = renderThermalPixelsBilinear(frame, colormap, 4);
+
      // 👇 叠加热点标注
     if (frame.analysis && (frame.analysis.hotspots.length > 0 || frame.analysis.coldspots.length > 0)) {
      pixels = drawHotspotMarkers(pixels, frame.width, frame.height, frame.analysis);
