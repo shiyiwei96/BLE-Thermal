@@ -215,19 +215,26 @@ export function drawHotspotMarkers(
   pixels: Uint8Array,
   width: number,
   height: number,
-  analysis: ThermalAnalysis
+  analysis: ThermalAnalysis,
+  scale: number = 1
 ): Uint8Array {
-  const out = new Uint8Array(pixels); // 拷贝
-
+  const out = new Uint8Array(pixels);
+  
   const drawPixel = (x: number, y: number, r: number, g: number, b: number) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return;
     const i = (y * width + x) * 4;
     out[i] = r; out[i + 1] = g; out[i + 2] = b; out[i + 3] = 255;
   };
 
+  // 把原始坐标缩放
+  const scaleCoord = (v: number) => Math.round(v * scale);
+
   // 画热点框（红色）
   for (const h of analysis.hotspots) {
-    const { x, y, w, h: hh } = h.bbox;
+    const x = scaleCoord(h.bbox.x);
+    const y = scaleCoord(h.bbox.y);
+    const w = scaleCoord(h.bbox.w);
+    const hh = scaleCoord(h.bbox.h);
     // 上下边
     for (let i = x; i < x + w; i++) {
       drawPixel(i, y, 255, 0, 0);
@@ -242,7 +249,10 @@ export function drawHotspotMarkers(
 
   // 画冷点框（蓝色）
   for (const c of analysis.coldspots) {
-    const { x, y, w, h: hh } = c.bbox;
+    const x = scaleCoord(c.bbox.x);
+    const y = scaleCoord(c.bbox.y);
+    const w = scaleCoord(c.bbox.w);
+    const hh = scaleCoord(c.bbox.h);
     for (let i = x; i < x + w; i++) {
       drawPixel(i, y, 0, 100, 255);
       drawPixel(i, y + hh - 1, 0, 100, 255);

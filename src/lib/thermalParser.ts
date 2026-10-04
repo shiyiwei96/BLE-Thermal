@@ -66,7 +66,7 @@ export function parseInt16Matrix(tempBytes: number[],offset: number = 0): Therma
 
 /** 解析 float32 温度矩阵 */
 export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | null {
-  console.log('[float32] 收到前32字节:', bytes.slice(0, 32).map(b => b.toString(16).padStart(2, '0')).join(' '));
+  //console.log('[float32] 收到前32字节:', bytes.slice(0, 32).map(b => b.toString(16).padStart(2, '0')).join(' '));
   if (bytes.length < THERMAL_FLOAT32_BYTES) return null;
 
   const W = THERMAL_W;
@@ -140,8 +140,22 @@ export function parseFloat32Matrix(bytes: number[], offset = 0): ThermalFrame | 
     if (v < minC) { minC = v; minIdx = i; }
     sum += v;
   }
-  console.log('[float32] tempData[0..15]:', tempData.slice(0, 16).map(v => v.toFixed(1)).join(','));
-  
+
+  let zeroCnt = 0;
+const zeroPos: string[] = [];
+for (let i = 0; i < filtered.length; i++) {
+  if (Math.abs(filtered[i]) < 0.5) {
+    zeroCnt++;
+    if (zeroPos.length < 30) zeroPos.push(`(${i % 32},${Math.floor(i / 32)})`);
+  }
+}
+console.log('[float32] 零值数:', zeroCnt, '位置:', zeroPos.join(','));
+  console.log('[float32] tempData[752..767]:', tempData.slice(752, 768).map(v => v.toFixed(1)).join(','));
+console.log('[float32] 行0:', filtered.slice(0, 32).map(v => v.toFixed(0)).join(','));
+console.log('[float32] 行8:', filtered.slice(8*32, 9*32).map(v => v.toFixed(0)).join(','));
+console.log('[float32] 行12:', filtered.slice(12*32, 13*32).map(v => v.toFixed(0)).join(','));
+console.log('[float32] 行16:', filtered.slice(16*32, 17*32).map(v => v.toFixed(0)).join(','));
+
   return buildFrame(filtered, maxC, minC, sum / filtered.length, maxIdx, minIdx);
 }
 

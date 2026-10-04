@@ -390,7 +390,7 @@ const getFrameUri = useCallback((frame: ThermalFrame): string => {
   // 缓存未命中：同步渲染一次，仅返回结果，不 setState
   // 👇 用双线性
   const { pixels, width, height } = renderThermalPixelsBilinear(frame, colormap, 4);
-  return pixelsToDataUri(pixels, frame.width, frame.height);
+  return pixelsToDataUri(pixels, width, height);
 }, [frameUriCache, colormap]);
 
 

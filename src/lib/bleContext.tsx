@@ -672,10 +672,10 @@ const renderThermalNow = useCallback((frame: ThermalFrame) => {
 
      // 👇 叠加热点标注
     if (frame.analysis && (frame.analysis.hotspots.length > 0 || frame.analysis.coldspots.length > 0)) {
-     pixels = drawHotspotMarkers(pixels, frame.width, frame.height, frame.analysis);
+     pixels = drawHotspotMarkers(pixels, frame.width, frame.height, frame.analysis,4);
     }
 
-    const dataUri = pixelsToDataUri(pixels, frame.width, frame.height);
+    const dataUri = pixelsToDataUri(pixels, width, height);
 
     setLatestThermalFrame(frame);
     setLatestThermalDataUri(dataUri);
@@ -747,135 +747,131 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
   const buf = thermalBufferRef.current;
   buf.push(...bytes);
 
-  const GESTURE_PREFIX_BYTES = GESTURE_PREFIX.split('').map((c: string) => c.charCodeAt(0));
-
-  // ============ 循环处理：AI 文本 + 热相帧 ============
-  while (true) {
-    // ---------- 1. 优先提取 AI 手势结果 ----------
-    let gestureIdx = -1;
-    for (let i = 0; i <= buf.length - GESTURE_PREFIX_BYTES.length; i++) {
-      let match = true;
-      for (let j = 0; j < GESTURE_PREFIX_BYTES.length; j++) {
-        if (buf[i + j] !== GESTURE_PREFIX_BYTES[j]) { match = false; break; }
+  // ============ 1. 遍历整个 buf 搜索帧头（不提前 break）============
+  if (thermalModeRef.current === 'unknown' && buf.length >= 32) {
+    let foundA = -1, foundB = -1, foundC = -1;
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (foundA < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
+        foundA = i;
       }
-      if (match) { gestureIdx = i; break; }
+      if (foundB < 0 && buf[i] === 0x5A && buf[i+1] === 0x5A && buf[i+2] === 0x02 && buf[i+3] === 0x06) {
+        foundB = i;
+      }
+      if (foundC < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x03 && buf[i+3] === 0x00) {
+        foundC = i;
+      }
+      if (foundA >= 0 && foundB >= 0 && foundC >= 0) break;
     }
 
-    if (gestureIdx >= 0) {
-      // 找行尾（\r 或 \n）
-      let end = gestureIdx + GESTURE_PREFIX_BYTES.length;
-      while (end < buf.length && buf[end] !== 0x0D && buf[end] !== 0x0A) end++;
-      if (end >= buf.length) break;  // 行未结束，等下一包
+    if (foundA >= 0) { thermalModeRef.current = 'headerA'; console.log('[热相] 帧头A int16(-40)'); }
+    else if (foundB >= 0) { thermalModeRef.current = 'headerB'; console.log('[热相] 帧头B int16(0)'); }
+    else if (foundC >= 0) { thermalModeRef.current = 'headerC'; console.log('[热相] 帧头C float32(0)'); }
+    else if (buf.length >= 64) {
+      const dv = new DataView(new Uint8Array(buf.slice(0, 4)).buffer);
+      const f = dv.getFloat32(0, true);
+      if (isFinite(f) && f > -50 && f < 200) {
+        thermalModeRef.current = 'floatNoHeader';
+      } else {
+        const v0 = buf[0] | (buf[1] << 8);
+        thermalModeRef.current = (v0 > 100 && v0 < 10000) ? 'noHeader' : 'data';
+      }
+      console.log('[热相] 探测:', thermalModeRef.current, 'A=', foundA, 'B=', foundB, 'C=', foundC);
+    }
+  }
 
-      const textBytes = buf.slice(gestureIdx + GESTURE_PREFIX_BYTES.length, end);
+  // ============ 2. 普通数据不处理 ============
+  if (thermalModeRef.current === 'data') return false;
+  if (thermalModeRef.current === 'unknown') return true;
+
+  // ============ 3. 切帧（先做，最后处理 AI 文本）============
+  const headerMap: Record<string, number[]> = {
+    headerA: THERMAL_HEADER_A,
+    headerB: THERMAL_HEADER_B,
+    headerC: THERMAL_HEADER_C,
+  };
+
+  if (thermalModeRef.current === 'noHeader' || thermalModeRef.current === 'floatNoHeader') {
+    const isFloat = thermalModeRef.current === 'floatNoHeader';
+    const NEED = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
+    while (buf.length >= NEED) {
+      const frameBytes = buf.slice(0, NEED);
+      buf.splice(0, NEED);
+      handleThermalFrame(frameBytes, 0, isFloat ? 'float32' : 'int16');
+    }
+    if (buf.length > NEED * 4) buf.length = 0;
+  } else {
+    const header = headerMap[thermalModeRef.current];
+    if (!header) return false;
+    const isFloat = thermalModeRef.current === 'headerC';
+    const dataLen = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
+
+    while (true) {
+      // 找帧头
+      let headerIdx = -1;
+      for (let i = 0; i <= buf.length - 4; i++) {
+        if (buf[i] === header[0] && buf[i+1] === header[1] && buf[i+2] === header[2] && buf[i+3] === header[3]) {
+          headerIdx = i; break;
+        }
+      }
+
+      if (headerIdx < 0) {
+        // 没找到帧头，保留最后 3 字节
+        if (buf.length > 3) {
+          const keep = buf.slice(-3);
+          buf.length = 0;
+          buf.push(...keep);
+        }
+        break;
+      }
+
+      if (headerIdx > 0) buf.splice(0, headerIdx);
+      if (buf.length < 4 + dataLen) break;
+
+      const dataBytes = buf.slice(4, 4 + dataLen);
+      buf.splice(0, 4 + dataLen);
+
+      const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
+      handleThermalFrame(dataBytes, offset, isFloat ? 'float32' : 'int16');
+    }
+  }
+
+  // ============ 4. 最后处理 AI 手势文本 ============
+  const PREFIX = 'predict gesture:';
+  const prefixBytes = PREFIX.split('').map(c => c.charCodeAt(0));
+  let gestureIdx = -1;
+  for (let i = 0; i <= buf.length - prefixBytes.length; i++) {
+    let match = true;
+    for (let j = 0; j < prefixBytes.length; j++) {
+      if (buf[i + j] !== prefixBytes[j]) { match = false; break; }
+    }
+    if (match) { gestureIdx = i; break; }
+  }
+
+  if (gestureIdx >= 0) {
+    let end = gestureIdx + prefixBytes.length;
+    while (end < buf.length && buf[end] !== 0x0D && buf[end] !== 0x0A) end++;
+    if (end < buf.length) {
+      const textBytes = buf.slice(gestureIdx + prefixBytes.length, end);
       const gestureStr = String.fromCharCode(...textBytes).trim();
       const gesture = parseInt(gestureStr, 10);
-
       if (!isNaN(gesture)) {
-        const result: GestureResult = { gesture, timestamp: Date.now() };
         setLatestGesture(gesture);
-        setGestureHistory(prev => [result, ...prev].slice(0, 50));
-
-        // 日志节流：2 秒一条
+        setGestureHistory(prev => [{ gesture, timestamp: Date.now() }, ...prev].slice(0, 50));
         const now = Date.now();
         if (now - lastGestureLogRef.current > 2000) {
           lastGestureLogRef.current = now;
           console.log('[AI] 手势:', gesture);
         }
       }
-
-      // 删除这段（含前后 \r\n）
+      // 删除这段
       let s = gestureIdx, e = end;
       while (s > 0 && (buf[s - 1] === 0x0D || buf[s - 1] === 0x0A)) s--;
       while (e < buf.length && (buf[e] === 0x0D || buf[e] === 0x0A)) e++;
       buf.splice(s, e - s);
-      continue;   // 继续处理后续数据
     }
-
-    // ---------- 2. 首次探测热相模式 ----------
-    if (thermalModeRef.current === 'unknown' && buf.length >= 8) {
-      let foundA = -1, foundB = -1, foundC = -1;
-      for (let i = 0; i <= buf.length - 4; i++) {
-        if (foundA < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) { foundA = i; break; }
-        if (foundB < 0 && buf[i] === 0x5A && buf[i+1] === 0x5A && buf[i+2] === 0x02 && buf[i+3] === 0x06) { foundB = i; break; }
-        if (foundC < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x03 && buf[i+3] === 0x00) { foundC = i; break; }
-      }
-
-      if (foundA >= 0) { thermalModeRef.current = 'headerA'; console.log('[热相] 帧头A int16(-40)'); }
-      else if (foundB >= 0) { thermalModeRef.current = 'headerB'; console.log('[热相] 帧头B int16(0)'); }
-      else if (foundC >= 0) { thermalModeRef.current = 'headerC'; console.log('[热相] 帧头C float32(0)'); }
-      else if (buf.length >= 64) {
-        const dv = new DataView(new Uint8Array(buf.slice(0, 4)).buffer);
-        const f = dv.getFloat32(0, true);
-        if (isFinite(f) && f > -50 && f < 200) {
-          thermalModeRef.current = 'floatNoHeader';
-        } else {
-          const v0 = buf[0] | (buf[1] << 8);
-          thermalModeRef.current = (v0 > 100 && v0 < 10000) ? 'noHeader' : 'data';
-        }
-        console.log('[热相] 探测:', thermalModeRef.current);
-      }
-    }
-
-    // ---------- 3. 普通数据 / 无帧头模式：不参与切帧 ----------
-    if (thermalModeRef.current === 'data') return false;
-    if (thermalModeRef.current === 'unknown') break;   // 等更多数据
-
-    // ---------- 4. 无帧头模式 ----------
-    if (thermalModeRef.current === 'noHeader' || thermalModeRef.current === 'floatNoHeader') {
-      const isFloat = thermalModeRef.current === 'floatNoHeader';
-      const NEED = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
-      while (buf.length >= NEED) {
-        const frameBytes = buf.slice(0, NEED);
-        buf.splice(0, NEED);
-        handleThermalFrame(frameBytes, 0, isFloat ? 'float32' : 'int16');  
-      }
-      if (buf.length > NEED * 4) buf.length = 0;
-      break;
-    }
-
-    // ---------- 5. 带帧头模式（A/B/C）----------
-    const headerMap: Record<string, number[]> = {
-      headerA: THERMAL_HEADER_A,
-      headerB: THERMAL_HEADER_B,
-      headerC: THERMAL_HEADER_C,
-    };
-    const header = headerMap[thermalModeRef.current];
-    if (!header) return false;
-
-    const isFloat = thermalModeRef.current === 'headerC';
-    const dataLen = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
-
-    // 找帧头
-    let headerIdx = -1;
-    for (let i = 0; i <= buf.length - 4; i++) {
-      if (buf[i] === header[0] && buf[i+1] === header[1] && buf[i+2] === header[2] && buf[i+3] === header[3]) {
-        headerIdx = i; break;
-      }
-    }
-
-    if (headerIdx < 0) {
-      // 帧头没找到：保留最后 3 字节
-      if (buf.length > 3) {
-        const keep = buf.slice(-3);
-        buf.length = 0;
-        buf.push(...keep);
-      }
-      break;
-    }
-
-    if (headerIdx > 0) buf.splice(0, headerIdx);   // 丢弃帧头前的垃圾
-    if (buf.length < 4 + dataLen) break;            // 数据不足
-
-    const dataBytes = buf.slice(4, 4 + dataLen);
-    buf.splice(0, 4 + dataLen);
-
-    const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
-    handleThermalFrame(dataBytes, offset, isFloat ? 'float32' : 'int16'); 
-
   }
 
-  // 溢出保护
+  // ============ 5. 溢出保护 ============
   const maxBuf = THERMAL_FLOAT32_BYTES * 4;
   if (buf.length > maxBuf) {
     console.warn('[热相] 缓冲区溢出，清空');
