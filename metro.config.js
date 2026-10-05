@@ -8,3 +8,5 @@ if (config.resolver.assetExts instanceof Set) {
 } else {
   config.resolver.assetExts.push('tflite');
 }
+
+module.exports = config;
