@@ -139,10 +139,28 @@ function withLocalProperties(config) {
           } catch (e) { console.warn(`镜像失败: ${e.message}`); }
         }
         if (!ok) throw new Error('NDK r14b 下载失败');
-        execSync(`unzip -q "${zipPath}" -d "${ndkBaseDir}"`, { stdio: 'inherit' });
+        if (!fs.existsSync(path.join(ndkBaseDir, 'android-ndk-r14b', 'ndk-build'))) {
+          execSync(`unzip -q "${zipPath}" -d "${ndkBaseDir}"`);
+         }
         fs.unlinkSync(zipPath);
+        console.log(`[withUvcCamera] NDK 解压完成: ${ndkDir}`);
       }
-
+     
+      // 验证 ndk-build 存在
+      const ndkBuildPath = path.join(ndkDir, 'ndk-build');
+      if (!fs.existsSync(ndkBuildPath)) {
+        console.warn(`[withUvcCamera] ⚠️ ndk-build 不存在: ${ndkBuildPath}`);
+        // 列出目录内容看看
+        try {
+          const contents = fs.readdirSync(ndkDir);
+          console.log(`[withUvcCamera] ndkDir 内容:`, contents);
+        } catch (e) {
+          console.log(`[withUvcCamera] 无法读取 ndkDir:`, e.message);
+        }
+      } else {
+        console.log(`[withUvcCamera] ✅ ndk-build 就位: ${ndkBuildPath}`);
+      }
+      
       // 动态获取 SDK 路径（从环境变量）
       const sdkDir = process.env.ANDROID_HOME
         || process.env.ANDROID_SDK_ROOT

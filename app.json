@@ -4,8 +4,9 @@
     "slug": "bluetooth-monitor-alert",
     "version": "1.0.10",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/icon.jpg",
     "userInterfaceStyle": "dark",
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "buildNumber": "1",
@@ -17,12 +18,10 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#121212",
-        "ndkVersion": "23.1.7779620"
+        "foregroundImage": "./assets/adaptive-icon.jpg",
+        "backgroundColor": "#121212"
       },
       "predictiveBackGestureEnabled": false,
-      
       "package": "com.miaoda.appbobi1rqlk4ch",
       "permissions": [
         "android.permission.BLUETOOTH",
@@ -75,29 +74,37 @@
           "bluetoothAlwaysPermission": "允许蓝牙监测预警访问蓝牙以扫描和连接蓝牙设备"
         }
       ],
+      [
+        "react-native-fast-tflite"
+      ],
       "expo-file-system",
       "expo-document-picker",
       "expo-sharing",
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/icon.jpg",
           "color": "#00E5FF",
           "defaultChannel": "ble-alerts"
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "ndkVersion": "23.1.7779620"
+          }
+        }
       ]
     ],
-    "router": {},
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "router": {},
       "eas": {
         "projectId": "8cc7581c-1254-4142-9580-c3e5baaa5959"
       }
     },
-    
     "assetBundlePatterns": [
       "assets/**/*"
     ]

@@ -1,8 +1,10 @@
 const { getDefaultConfig } = require('expo/metro-config');
-const { withDevkit } = require('miaoda-expo-devkit/metro');
 
 const config = getDefaultConfig(__dirname);
 
-config.resolver.assetExts.push('tflite');
-
-module.exports = withDevkit(config);
+// 加 tflite 到 assetExts（Expo 新版 assetExts 是 Set）
+if (config.resolver.assetExts instanceof Set) {
+  config.resolver.assetExts.add('tflite');
+} else {
+  config.resolver.assetExts.push('tflite');
+}
