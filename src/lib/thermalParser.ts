@@ -149,13 +149,6 @@ for (let i = 0; i < filtered.length; i++) {
     if (zeroPos.length < 30) zeroPos.push(`(${i % 32},${Math.floor(i / 32)})`);
   }
 }
-console.log('[float32] 零值数:', zeroCnt, '位置:', zeroPos.join(','));
-  console.log('[float32] tempData[752..767]:', tempData.slice(752, 768).map(v => v.toFixed(1)).join(','));
-console.log('[float32] 行0:', filtered.slice(0, 32).map(v => v.toFixed(0)).join(','));
-console.log('[float32] 行8:', filtered.slice(8*32, 9*32).map(v => v.toFixed(0)).join(','));
-console.log('[float32] 行12:', filtered.slice(12*32, 13*32).map(v => v.toFixed(0)).join(','));
-console.log('[float32] 行16:', filtered.slice(16*32, 17*32).map(v => v.toFixed(0)).join(','));
-
   return buildFrame(filtered, maxC, minC, sum / filtered.length, maxIdx, minIdx);
 }
 

@@ -265,7 +265,7 @@ const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 const latestThermalFrameRef = useRef<ThermalFrame | null>(null);
 const lastGestureLogRef = useRef(0);
 const lastThermalLogRef = useRef(0);
-
+const lastHeaderLogRef = useRef(0);
 // ============ BleProvider ============
 export function BleProvider({ children }: { children: React.ReactNode }) {
   const [bleReady, setBleReady] = useState(false);
@@ -661,32 +661,34 @@ const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 const renderThermalNow = useCallback((frame: ThermalFrame) => {
   try {
     console.log('[热相] frame max/min/avg:',
-    frame.maxTemp.toFixed(2),
-    frame.minTemp.toFixed(2),
-    frame.avgTemp.toFixed(2),
-    'tempData[0]:', frame.tempData[0].toFixed(2)
-  );
-    const colormap = (settingsRef.current.thermalColormap ?? 'iron') as ThermalColormap;
-    // 👇 用双线性插值放大 4 倍（32×24 → 128×96）
-    let { pixels, width, height } = renderThermalPixelsBilinear(frame, colormap, 4);
+      frame.maxTemp.toFixed(2),
+      frame.minTemp.toFixed(2),
+      frame.avgTemp.toFixed(2),
+      'tempData[0]:', frame.tempData[0].toFixed(2)
+    );
 
-     // 👇 叠加热点标注
+    const colormap = (settingsRef.current.thermalColormap ?? 'iron') as ThermalColormap;
+
+    // 双线性插值，放大 4 倍（32×24 → 128×96）
+    const SCALE = 4;
+    let { pixels, width, height } = renderThermalPixelsBilinear(frame, colormap, SCALE);
+
+    // 叠加热点标注（用插值后的 width/height + scale）
     if (frame.analysis && (frame.analysis.hotspots.length > 0 || frame.analysis.coldspots.length > 0)) {
-     pixels = drawHotspotMarkers(pixels, frame.width, frame.height, frame.analysis,4);
+      pixels = drawHotspotMarkers(pixels, width, height, frame.analysis, SCALE);
     }
 
+    // 用插值后的尺寸编码
     const dataUri = pixelsToDataUri(pixels, width, height);
 
     setLatestThermalFrame(frame);
     setLatestThermalDataUri(dataUri);
 
-    // 历史只保留最近 20 帧，减少渲染压力
     setThermalFrames(prev => {
       if (prev.length >= 20) return [frame, ...prev.slice(0, 19)];
       return [frame, ...prev];
     });
 
-    // 温度历史节流到 500ms 一次
     const now = Date.now();
     if (now - lastTempHistoryRef.current >= 500) {
       lastTempHistoryRef.current = now;
@@ -719,7 +721,7 @@ const handleThermalFrame = useCallback((
     // 节流：4fps 渲染
     thermalPendingRef.current = frame;
     const now = Date.now();
-    const INTERVAL = type === 'float32' ? 250 : 250;
+    const INTERVAL = type === 'float32' ? 500 : 250;
 
     if (now - thermalLastRenderRef.current >= INTERVAL) {
       thermalLastRenderRef.current = now;
@@ -747,98 +749,91 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
   const buf = thermalBufferRef.current;
   buf.push(...bytes);
 
-  // ============ 1. 遍历整个 buf 搜索帧头（不提前 break）============
+  // ============ 1. 探测帧头模式 ============
   if (thermalModeRef.current === 'unknown' && buf.length >= 32) {
     let foundA = -1, foundB = -1, foundC = -1;
     for (let i = 0; i <= buf.length - 4; i++) {
-      if (foundA < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) {
-        foundA = i;
-      }
-      if (foundB < 0 && buf[i] === 0x5A && buf[i+1] === 0x5A && buf[i+2] === 0x02 && buf[i+3] === 0x06) {
-        foundB = i;
-      }
-      if (foundC < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x03 && buf[i+3] === 0x00) {
-        foundC = i;
-      }
+      if (foundA < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x02 && buf[i+3] === 0x00) foundA = i;
+      if (foundB < 0 && buf[i] === 0x5A && buf[i+1] === 0x5A && buf[i+2] === 0x02 && buf[i+3] === 0x06) foundB = i;
+      if (foundC < 0 && buf[i] === 0x5A && buf[i+1] === 0x06 && buf[i+2] === 0x03 && buf[i+3] === 0x00) foundC = i;
       if (foundA >= 0 && foundB >= 0 && foundC >= 0) break;
     }
-    console.log('[热相] 探测: mode =', thermalModeRef.current, 'foundA =', foundA, 'foundB =', foundB, 'foundC =', foundC, 'buf =', buf.length);
 
-    if (foundA >= 0) { thermalModeRef.current = 'headerA'; console.log('[热相] 帧头A int16(-40)'); }
-    else if (foundB >= 0) { thermalModeRef.current = 'headerB'; console.log('[热相] 帧头B int16(0)'); }
-    else if (foundC >= 0) { thermalModeRef.current = 'headerC'; console.log('[热相] 帧头C float32(0)'); }
-    else if (buf.length >= 64) {
-      const dv = new DataView(new Uint8Array(buf.slice(0, 4)).buffer);
-      const f = dv.getFloat32(0, true);
-      if (isFinite(f) && f > -50 && f < 200) {
-        thermalModeRef.current = 'floatNoHeader';
-      } else {
-        const v0 = buf[0] | (buf[1] << 8);
-        thermalModeRef.current = (v0 > 100 && v0 < 10000) ? 'noHeader' : 'data';
-      }
-      console.log('[热相] 探测:', thermalModeRef.current, 'A=', foundA, 'B=', foundB, 'C=', foundC);
+    if (foundA >= 0) { thermalModeRef.current = 'headerA'; console.log('[热相] 帧头A'); }
+    else if (foundB >= 0) { thermalModeRef.current = 'headerB'; console.log('[热相] 帧头B'); }
+    else if (foundC >= 0) { thermalModeRef.current = 'headerC'; console.log('[热相] 帧头C'); }
+    else if (buf.length > 5000) {
+      buf.splice(0, 2500);
     }
   }
 
-  // ============ 2. 普通数据不处理 ============
-  if (thermalModeRef.current === 'data') return false;
   if (thermalModeRef.current === 'unknown') return true;
 
-  // ============ 3. 切帧（先做，最后处理 AI 文本）============
+  // ============ 2. 切帧 ============
   const headerMap: Record<string, number[]> = {
     headerA: THERMAL_HEADER_A,
     headerB: THERMAL_HEADER_B,
     headerC: THERMAL_HEADER_C,
   };
+  const header = headerMap[thermalModeRef.current];
+  if (!header) return false;
 
-  if (thermalModeRef.current === 'noHeader' || thermalModeRef.current === 'floatNoHeader') {
-    const isFloat = thermalModeRef.current === 'floatNoHeader';
-    const NEED = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
-    while (buf.length >= NEED) {
-      const frameBytes = buf.slice(0, NEED);
-      buf.splice(0, NEED);
-      handleThermalFrame(frameBytes, 0, isFloat ? 'float32' : 'int16');
-    }
-    if (buf.length > NEED * 4) buf.length = 0;
-  } else {
-    const header = headerMap[thermalModeRef.current];
-    if (!header) return false;
-    const isFloat = thermalModeRef.current === 'headerC';
-    const dataLen = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
+  const isFloat = thermalModeRef.current === 'headerC';
+  const dataLen = isFloat ? THERMAL_FLOAT32_BYTES : THERMAL_INT16_BYTES;
+  const FRAME_LEN = 4 + dataLen;
 
-    while (true) {
-      // 找帧头
-      let headerIdx = -1;
-      for (let i = 0; i <= buf.length - 4; i++) {
-        if (buf[i] === header[0] && buf[i+1] === header[1] && buf[i+2] === header[2] && buf[i+3] === header[3]) {
-          headerIdx = i; break;
-        }
-      }
-
-      if (headerIdx < 0) {
-        // 没找到帧头，保留最后 3 字节
-        if (buf.length > 3) {
-          const keep = buf.slice(-3);
-          buf.length = 0;
-          buf.push(...keep);
-        }
+  while (true) {
+    // 找帧头
+    let headerIdx = -1;
+    for (let i = 0; i <= buf.length - 4; i++) {
+      if (buf[i] === header[0] && buf[i+1] === header[1] && buf[i+2] === header[2] && buf[i+3] === header[3]) {
+        headerIdx = i;
         break;
       }
-
-      if (headerIdx > 0) buf.splice(0, headerIdx);
-      if (buf.length < 4 + dataLen) break;
-
-      const dataBytes = buf.slice(4, 4 + dataLen);
-      buf.splice(0, 4 + dataLen);
-
-      const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
-      handleThermalFrame(dataBytes, offset, isFloat ? 'float32' : 'int16');
     }
+
+    if (headerIdx < 0) {
+      // 找不到帧头：只保留最后 3 字节（防止帧头被切断）
+      if (buf.length > 3) {
+        const keep = buf.slice(-3);
+        buf.length = 0;
+        buf.push(...keep);
+      }
+      break;
+    }
+
+    if (headerIdx > 0) buf.splice(0, headerIdx);
+
+    if (buf.length < FRAME_LEN) break;
+
+    // 👇 关键：验证帧头后是否跟 "正确数据"，避免巧合帧头
+    // 用下一帧的帧头位置验证长度是否匹配
+    let nextHeaderIdx = -1;
+    for (let i = FRAME_LEN; i <= buf.length - 4; i++) {
+      if (buf[i] === header[0] && buf[i+1] === header[1] && buf[i+2] === header[2] && buf[i+3] === header[3]) {
+        nextHeaderIdx = i;
+        break;
+      }
+    }
+
+    // 如果下一帧头存在，且距离不等于 FRAME_LEN + 文本长度，说明当前帧头可能是巧合
+    // （这里放宽要求：只要下一帧头距离 >= FRAME_LEN，就接受）
+    if (nextHeaderIdx >= 0 && nextHeaderIdx < FRAME_LEN - 10) {
+      // 下一帧头出现得太早，说明当前是巧合帧头
+      console.warn('[热相] 巧合帧头，跳过 1 字节');
+      buf.splice(0, 1);
+      continue;
+    }
+
+    const dataBytes = buf.slice(4, 4 + dataLen);
+    buf.splice(0, FRAME_LEN);
+
+    const offset = thermalModeRef.current === 'headerA' ? -40 : 0;
+    handleThermalFrame(dataBytes, offset, isFloat ? 'float32' : 'int16');
   }
 
-  // ============ 4. 最后处理 AI 手势文本 ============
-  const PREFIX = 'predict gesture:';
-  const prefixBytes = PREFIX.split('').map(c => c.charCodeAt(0));
+  // ============ 3. AI 手势 ============
+  const prefixBytes = GESTURE_PREFIX.split('').map(c => c.charCodeAt(0));
   let gestureIdx = -1;
   for (let i = 0; i <= buf.length - prefixBytes.length; i++) {
     let match = true;
@@ -847,35 +842,31 @@ const feedThermalData = useCallback((bytes: number[]): boolean => {
     }
     if (match) { gestureIdx = i; break; }
   }
-
   if (gestureIdx >= 0) {
     let end = gestureIdx + prefixBytes.length;
     while (end < buf.length && buf[end] !== 0x0D && buf[end] !== 0x0A) end++;
     if (end < buf.length) {
       const textBytes = buf.slice(gestureIdx + prefixBytes.length, end);
-      const gestureStr = String.fromCharCode(...textBytes).trim();
-      const gesture = parseInt(gestureStr, 10);
+      const gesture = parseInt(String.fromCharCode(...textBytes).trim(), 10);
       if (!isNaN(gesture)) {
         setLatestGesture(gesture);
-        setGestureHistory(prev => [{ gesture, timestamp: Date.now() }, ...prev].slice(0, 50));
         const now = Date.now();
         if (now - lastGestureLogRef.current > 2000) {
           lastGestureLogRef.current = now;
           console.log('[AI] 手势:', gesture);
         }
       }
-      // 删除这段
       let s = gestureIdx, e = end;
-      while (s > 0 && (buf[s - 1] === 0x0D || buf[s - 1] === 0x0A)) s--;
+      while (s > 0 && (buf[s-1] === 0x0D || buf[s-1] === 0x0A)) s--;
       while (e < buf.length && (buf[e] === 0x0D || buf[e] === 0x0A)) e++;
       buf.splice(s, e - s);
     }
   }
 
-  // ============ 5. 溢出保护 ============
-  const maxBuf = THERMAL_FLOAT32_BYTES * 4;
-  if (buf.length > maxBuf) {
-    console.warn('[热相] 缓冲区溢出，清空');
+  // ============ 4. 缓冲上限保护 ============
+  const MAX_BUF = (4 + THERMAL_FLOAT32_BYTES) * 2;
+  if (buf.length > MAX_BUF) {
+    console.warn('[热相] 缓冲过大，清空');
     buf.length = 0;
   }
 
@@ -935,22 +926,7 @@ notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
 
     // ---- 2. 热相（feedThermalData 返回 true 表示已消费）----
     if (feedThermalData(bytes)) {
-  const now = Date.now();
-  if (now - lastThermalLogRef.current > 3000) {
-    lastThermalLogRef.current = now;
-    const f = latestThermalFrameRef.current;
-    if (f) {
-      const logEntry = createLogEntry('RX', [], device.id);  // ← 空 rawData
-      addLog({
-        ...logEntry,
-        parsedFields: {
-          '热相帧': 1,
-          '最高温': parseFloat(f.maxTemp.toFixed(1)),
-          '温差': parseFloat((f.maxTemp - f.minTemp).toFixed(1)),
-        },
-      });
-    }
-  }
+  
   return;
 }
 

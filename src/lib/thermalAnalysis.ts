@@ -219,48 +219,34 @@ export function drawHotspotMarkers(
   scale: number = 1
 ): Uint8Array {
   const out = new Uint8Array(pixels);
-  
+
   const drawPixel = (x: number, y: number, r: number, g: number, b: number) => {
     if (x < 0 || x >= width || y < 0 || y >= height) return;
     const i = (y * width + x) * 4;
     out[i] = r; out[i + 1] = g; out[i + 2] = b; out[i + 3] = 255;
   };
 
-  // 把原始坐标缩放
-  const scaleCoord = (v: number) => Math.round(v * scale);
+  // 画 3×3 点（中心在 cx, cy）
+  const drawDot = (cx: number, cy: number, r: number, g: number, b: number) => {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        drawPixel(cx + dx, cy + dy, r, g, b);
+      }
+    }
+  };
 
-  // 画热点框（红色）
+  // 热点：红色小点
   for (const h of analysis.hotspots) {
-    const x = scaleCoord(h.bbox.x);
-    const y = scaleCoord(h.bbox.y);
-    const w = scaleCoord(h.bbox.w);
-    const hh = scaleCoord(h.bbox.h);
-    // 上下边
-    for (let i = x; i < x + w; i++) {
-      drawPixel(i, y, 255, 0, 0);
-      drawPixel(i, y + hh - 1, 255, 0, 0);
-    }
-    // 左右边
-    for (let j = y; j < y + hh; j++) {
-      drawPixel(x, j, 255, 0, 0);
-      drawPixel(x + w - 1, j, 255, 0, 0);
-    }
+    const cx = Math.round(h.centerX * scale);
+    const cy = Math.round(h.centerY * scale);
+    drawDot(cx, cy, 255, 0, 0);
   }
 
-  // 画冷点框（蓝色）
+  // 冷点：蓝色小点
   for (const c of analysis.coldspots) {
-    const x = scaleCoord(c.bbox.x);
-    const y = scaleCoord(c.bbox.y);
-    const w = scaleCoord(c.bbox.w);
-    const hh = scaleCoord(c.bbox.h);
-    for (let i = x; i < x + w; i++) {
-      drawPixel(i, y, 0, 100, 255);
-      drawPixel(i, y + hh - 1, 0, 100, 255);
-    }
-    for (let j = y; j < y + hh; j++) {
-      drawPixel(x, j, 0, 100, 255);
-      drawPixel(x + w - 1, j, 0, 100, 255);
-    }
+    const cx = Math.round(c.centerX * scale);
+    const cy = Math.round(c.centerY * scale);
+    drawDot(cx, cy, 0, 100, 255);
   }
 
   return out;

@@ -50,3 +50,4 @@ output.tar.gz
 .sync
 history/*.json
 .claude/
+.idea/ 
