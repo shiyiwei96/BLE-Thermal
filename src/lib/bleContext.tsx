@@ -6,6 +6,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { resolveBleConfigOrDefault,resolveDataMode, type DeviceDataMode } from './types';
 import { State as BleAdapterState, type Subscription } from 'react-native-ble-plx';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type {
   AlertEntry,
@@ -208,6 +209,7 @@ interface BleContextType extends BleState {
   latestThermalDataUri: string | null;
   latestGesture: number | null;
   gestureHistory: Array<{ gesture: number; timestamp: number }>; 
+  
   clearThermalFrames: () => void;
   // ── 多设备管理 ──
   connectedDevices: BleDevice[];
@@ -220,6 +222,9 @@ interface BleContextType extends BleState {
   updateDeviceInfo: (deviceId: string, info: Partial<Pick<DeviceRuntimeInfo, 'customName' | 'colorLabel'>>) => void;
   /** 添加外部预警（来自模型比对等模块）*/
   addExternalAlert: (entry: AlertEntry) => void;
+  //AI识别
+  thermalAiReport: string;
+  setThermalAiReport: (report: string) => void;
 }
 
 const BleContext = createContext<BleContextType | null>(null);
@@ -266,6 +271,7 @@ const latestThermalFrameRef = useRef<ThermalFrame | null>(null);
 const lastGestureLogRef = useRef(0);
 const lastThermalLogRef = useRef(0);
 const lastHeaderLogRef = useRef(0);
+const lastAlertTimeRef = useRef(0);
 // ============ BleProvider ============
 export function BleProvider({ children }: { children: React.ReactNode }) {
   const [bleReady, setBleReady] = useState(false);
@@ -292,8 +298,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const [latestThermalDataUri, setLatestThermalDataUri] = useState<string | null>(null);
   const [latestGesture, setLatestGesture] = useState<number | null>(null);
   const [gestureHistory, setGestureHistory] = useState<Array<{ gesture: number; timestamp: number }>>([]);
+  const [thermalAiReport, setThermalAiReport] = useState<string>('');
   useEffect(() => { latestThermalFrameRef.current = latestThermalFrame; }, [latestThermalFrame]);
-
+  
   // ===== 多设备状态 =====
   const [connectedDevices, setConnectedDevices] = useState<BleDevice[]>([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
@@ -660,12 +667,16 @@ const thermalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 // ============ 热相渲染（节流 4fps）============
 const renderThermalNow = useCallback((frame: ThermalFrame) => {
   try {
-    console.log('[热相] frame max/min/avg:',
-      frame.maxTemp.toFixed(2),
-      frame.minTemp.toFixed(2),
-      frame.avgTemp.toFixed(2),
-      'tempData[0]:', frame.tempData[0].toFixed(2)
-    );
+     // 超过 50°C 报警，否则不打印
+    if (frame.maxTemp > 50) {
+  const now = Date.now();
+  // 60秒内只报警一次，防止弹窗轰炸
+  if (now - lastAlertTimeRef.current > 60000) {
+    lastAlertTimeRef.current = now;
+    console.warn(`🚨 [高温警报] ${frame.maxTemp.toFixed(1)}℃`);
+    Alert.alert('高温警告', `检测到设备温度异常，当前最高温：${frame.maxTemp.toFixed(1)}℃`);
+  }
+}
 
     const colormap = (settingsRef.current.thermalColormap ?? 'iron') as ThermalColormap;
 
@@ -1313,6 +1324,8 @@ notifySubscriptionRef.current = connectedPlx.monitorCharacteristicForService(
       latestGesture,
       gestureHistory,
       clearThermalFrames,
+      thermalAiReport,
+      setThermalAiReport,
       // 多设备
       connectedDevices,
       activeDeviceId,

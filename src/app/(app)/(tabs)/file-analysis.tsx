@@ -21,6 +21,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import {
   analyzeImage,
+  runOfflineAIAnalysis,
   CHANNEL_COLORS,
   CHANNEL_LABELS,
   detectFileType,
@@ -51,6 +52,8 @@ const ORANGE   = '#FF9100';
 const TEXT_PRIMARY = '#E0E0E0';
 const TEXT_MUTED   = '#666666';
 
+// 添加 AI 识别状态
+const [aiResult, setAiResult] = useState<{ label: string; confidence: number } | null>(null);
 // ─── 辅助组件 ─────────────────────────────────────────────────────────────────
 
 function SectionHeader({ title }: { title: string }) {
@@ -283,45 +286,56 @@ export default function FileAnalysisScreen() {
     }
   };
 
-  /** JPG/PNG 图像文件导入并分析 */
-  const importImageFile = async (
-    uri: string,
-    fileName: string,
-    fileType: 'jpg' | 'jpeg' | 'png',
-    fileSize: number
-  ) => {
-    setLoading(true);
-    try {
-      // 读取文件为 base64 data URI
-      const b64 = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      const mime = fileType === 'png' ? 'image/png' : 'image/jpeg';
-      const dataUri = `data:${mime};base64,${b64}`;
+  /** JPG/PNG 图像文件导入、分析并跑 AI 模型 */
+const importImageFile = async (
+  uri: string,
+  fileName: string,
+  fileType: 'jpg' | 'jpeg' | 'png',
+  fileSize: number
+) => {
+  setLoading(true);
+  setAiResult(null); // 清空上一次的 AI 结果
+  try {
+    // 1. 读取文件为 base64 data URI 用于显示
+    const b64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const mime = fileType === 'png' ? 'image/png' : 'image/jpeg';
+    const dataUri = `data:${mime};base64,${b64}`;
 
-      // 对于 JPG/PNG，无法在纯 JS 中轻松解码像素，
-      // 用 expo-image 显示即可，分析结果显示占位说明
-      const record: ImportedFileRecord = {
-        id: genId(),
-        importedAt: Date.now(),
-        fileName,
-        fileSize: fileSize || b64.length * 0.75,
-        fileType,
-        width: 0,
-        height: 0,
-        channels: 3,
-        dataUri,
-      };
-
-      pushHistory(record);
-      setCurrent(record);
-      setChannelView(null);
-      rgbaRef.current = null;
-      showInfo('图像导入成功');
-    } finally {
-      setLoading(false);
+    // 2. 调用核心 AI 函数（里面包含了缩放、灰度转换、HOG 提取和 SVC 推理）
+    // 注意：runOfflineAIAnalysis 是我们在 imageAnalysis.ts 里写好的
+    const result = await runOfflineAIAnalysis(uri);
+    if (result) {
+      setAiResult(result);
     }
-  };
+
+    // 3. 构建记录并推入历史
+    const record: ImportedFileRecord = {
+      id: genId(),
+      importedAt: Date.now(),
+      fileName,
+      fileSize: fileSize || b64.length * 0.75,
+      fileType,
+      width: 64,  // 因为模型要求 64x64，这里直接标记为 64
+      height: 64,
+      channels: 3,
+      dataUri,
+    };
+
+    pushHistory(record);
+    setCurrent(record);
+    setChannelView(null);
+    rgbaRef.current = null;
+    showInfo('图像导入成功并完成 AI 分析');
+  } catch (e) {
+    console.error(e);
+    showErr('图像分析失败');
+  } finally {
+    setLoading(false);
+  }
+};
+
 
   /** 确认 RGB 参数并解析 */
   const handleConfirmRgb = async () => {
@@ -573,8 +587,39 @@ export default function FileAnalysisScreen() {
                   {new Date(current.importedAt).toLocaleTimeString()}
                 </Text>
               </View>
+                    {/* 👇 新增：AI 离线识别结果卡片 */}
+      {aiResult && (
+        <View style={{
+          backgroundColor: `${GREEN}10`,
+          borderWidth: 1,
+          borderColor: GREEN,
+          borderRadius: 2,
+          padding: 12,
+          marginTop: 8,
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <Ionicons name="hardware-chip-outline" size={16} color={GREEN} />
+            <Text style={{ color: GREEN, fontSize: 12, fontWeight: '800' }}>
+              离线 AI 分析结果 (HOG + SVC)
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ color: TEXT_MUTED, fontSize: 12 }}>识别类型</Text>
+            <Text style={{ color: GREEN, fontSize: 18, fontWeight: '900', fontFamily: 'monospace' }}>
+              {aiResult.label}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+            <Text style={{ color: TEXT_MUTED, fontSize: 12 }}>置信度</Text>
+            <Text style={{ color: GREEN, fontSize: 12, fontFamily: 'monospace' }}>
+              {(aiResult.confidence * 100).toFixed(1)}%
+            </Text>
+          </View>
+        </View>
+         )}
             </View>
 
+            
             {/* ── 通道分离视图（仅 RGB 文件） ── */}
             {canSplitChannel && (
               <>

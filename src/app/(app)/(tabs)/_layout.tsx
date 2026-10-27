@@ -119,6 +119,16 @@ export default function TabsLayout() {
           ),
         }}
       />
+      
+      <Tabs.Screen
+  name="ai-assistant"
+  options={{
+    title: 'AI 副驾',
+    tabBarIcon: ({ color }) => <Ionicons name="sparkles" size={24} color={color} />,
+  }}
+/>
+   
     </Tabs>
+    
   );
 }

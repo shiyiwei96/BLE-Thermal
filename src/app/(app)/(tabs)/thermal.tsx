@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useFocusEffect } from 'expo-router';
-
+import { useRouter } from 'expo-router';
 import { useBle } from '@/lib/bleContext';
 import { useSerial } from '@/lib/serialContext';
 import {
@@ -22,7 +22,7 @@ import {
 } from '@/lib/thermalAnalysis';
 import { loadModel, runThermalInference } from '@/lib/thermalModel';
 import type { ThermalFrame, ThermalColormap } from '@/lib/types';
-
+import { classifyThermalByRule } from '@/lib/thermalRuleClassifier';
 // ============ 颜色常量 ============
 const DARK_BG = '#121212';
 const CARD_BG = '#1A1A1A';
@@ -199,6 +199,8 @@ export default function ThermalScreen() {
   // 同时支持 BLE / USB
   const ble = useBle();
   const serial = useSerial();
+  const router = useRouter();
+  const {setThermalAiReport} = useBle();
 
   const latestThermalFrame = serial.isConnected
     ? serial.latestThermalFrame
@@ -220,9 +222,11 @@ export default function ThermalScreen() {
 
   // AI 相关
   const [aiResult, setAiResult] = useState<{ label: number; confidence: number } | null>(null);
+  const [ruleStatus, setRuleStatus] = useState<string>(''); // 用来在 UI 上显示当前是什么（Animal/PowerCable）
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [modelReady, setModelReady] = useState(false);
+  
   const lastInferRef = useRef(0);
   const inferInFlightRef = useRef(false);
 
@@ -244,32 +248,64 @@ export default function ThermalScreen() {
       });
   }, []);
 
-  // ============ 每收到新帧，节流推理一次 ============
-  useEffect(() => {
-    if (!modelReady || !latestThermalFrame) return;
+// ============ 每收到新帧，CNN 优先，规则兜底 ============
+useEffect(() => {
+  if (!modelReady || !latestThermalFrame) return;
+  
+  const now = Date.now();
+  if (now - lastInferRef.current < 500) return; 
+  lastInferRef.current = now;
 
-    const now = Date.now();
-    // 节流：最少间隔 500ms
-    if (now - lastInferRef.current < 500) return;
-    // 防止并发（上一帧还没跑完就跳过）
-    if (inferInFlightRef.current) return;
-    lastInferRef.current = now;
-    inferInFlightRef.current = true;
-    setAiLoading(true);
+  // 1. 生成灰度图跑 OpenCV 规则（作为兜底背景场景）
+  const t_min = latestThermalFrame.minTemp;
+  const t_max = latestThermalFrame.maxTemp;
+  const range = t_max - t_min || 1;
+  const grayImg = latestThermalFrame.tempData.map(t => 
+    Math.max(0, Math.min(255, Math.round(((t - t_min) / range) * 255)))
+  );
+  const ruleRes = classifyThermalByRule(grayImg);
 
-    runThermalInference(latestThermalFrame.tempData)
-      .then(res => {
-        setAiResult({ label: res.label, confidence: res.confidence });
-        setAiError(null);
-      })
-      .catch(e => {
-        setAiError('推理失败: ' + (e instanceof Error ? e.message : String(e)));
-      })
-      .finally(() => {
-        setAiLoading(false);
-        inferInFlightRef.current = false;
-      });
-  }, [latestThermalFrame, modelReady]);
+  // 2. 无论 OpenCV 判成什么，直接启动 TFLite 手势识别
+  if (inferInFlightRef.current) return;
+  inferInFlightRef.current = true;
+  setAiLoading(true);
+
+  runThermalInference(latestThermalFrame.tempData)
+    .then(res => {
+      setAiResult({ label: res.label, confidence: res.confidence });
+      setAiError(null);
+
+      // 👇 核心判定逻辑
+      let finalScene = ruleRes.status;
+      let reportText = '';
+
+      // 如果模型输出了 1~5 的手势（假设 0 是无手势），且置信度大于 60%
+      if (res.label > 0 && res.confidence > 0.6) {
+        finalScene = "Animal (高置信手势)"; 
+        
+        // 覆盖 UI 上的场景显示
+        setRuleStatus(finalScene); 
+        
+        // 生成报告
+        reportText = `[${new Date().toLocaleTimeString()}] 场景: ${finalScene} | 手势: ${res.label} (置信度${(res.confidence*100).toFixed(0)}%) | 最高温: ${latestThermalFrame.maxTemp.toFixed(1)}℃`;
+      } else {
+        // 如果没识别出手势，接受 OpenCV 的判定
+        setRuleStatus(ruleRes.status);
+        reportText = `[${new Date().toLocaleTimeString()}] 场景: ${ruleRes.status} | 最高温: ${latestThermalFrame.maxTemp.toFixed(1)}℃`;
+      }
+
+      // 将最终报告存入全局
+      setThermalAiReport(reportText);
+    })
+    .catch(e => {
+      setAiError('推理失败: ' + (e instanceof Error ? e.message : String(e)));
+    })
+    .finally(() => {
+      setAiLoading(false);
+      inferInFlightRef.current = false;
+    });
+}, [latestThermalFrame, modelReady]);
+
 
   // ============ 缓存 + 帧率 ============
   useEffect(() => {
@@ -294,6 +330,7 @@ export default function ThermalScreen() {
       lastFrameTimeRef.current = now;
     }
   }, [latestThermalFrame, latestThermalDataUri]);
+
 
   // ============ 页面聚焦重置 ============
   useFocusEffect(useCallback(() => {
@@ -397,6 +434,19 @@ export default function ThermalScreen() {
           error={aiError}
           modelReady={modelReady}
         />
+
+        <Pressable
+        onPress={() => {
+        // 跳转到 AI 助手页
+        // @ts-ignore
+        router.push('/(app)/(tabs)/ai-assistant');
+      }}
+        style={{ marginTop: 8, padding: 8, backgroundColor: '#00E5FF20', borderRadius: 4, alignItems: 'center' }}
+     >
+     <Text style={{ color: '#00E5FF', fontSize: 12, fontWeight: 'bold' }}>
+      //让 AI 深度分析当前画面
+     </Text>
+   </Pressable>
 
         {/* ===== 热相图 ===== */}
         <View style={{
