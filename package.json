@@ -71,7 +71,6 @@
     "react-dom": "19.2.0",
     "react-native": "0.83.10",
     "react-native-ble-plx": "^3.5.1",
-    "react-native-camera": "^4.2.1",
     "react-native-css-interop": "^0.2.3",
     "react-native-fast-tflite": "^3.0.1",
     "react-native-gesture-handler": "~2.30.0",

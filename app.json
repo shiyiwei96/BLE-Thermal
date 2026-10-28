@@ -45,7 +45,7 @@
     },
     "plugins": [
       "./plugins/withUvcCamera",
-      "./plugins/withReactNativeCamera",
+      
       [
         "expo-dev-client",
         {
