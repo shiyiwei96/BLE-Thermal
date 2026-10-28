@@ -5,7 +5,7 @@
     "scheme": "blethermal",
     "version": "4.0.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.jpg",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
@@ -18,7 +18,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.jpg",
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#121212"
       },
       "predictiveBackGestureEnabled": false,
@@ -82,7 +82,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.jpg",
+          "icon": "./assets/icon.png",
           "color": "#00E5FF",
           "defaultChannel": "ble-alerts"
         }
