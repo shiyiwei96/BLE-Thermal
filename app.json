@@ -2,11 +2,11 @@
   "expo": {
     "name": "蓝牙数据监测预警系统",
     "slug": "bluetooth-monitor-alert",
-    "version": "1.0.10",
+    "scheme": "blethermal",
+    "version": "4.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.jpg",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "buildNumber": "1",
@@ -44,8 +44,6 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "./plugins/withUvcCamera",
-      
       [
         "expo-dev-client",
         {
@@ -96,7 +94,8 @@
             "ndkVersion": "23.1.7779620"
           }
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true
